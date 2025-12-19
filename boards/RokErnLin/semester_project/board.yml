@@ -1,0 +1,8 @@
+board:
+  name: semester_project
+  vendor: RokErnLin
+  socs:
+  - name: nrf54l05
+    variants:
+    - name: xip
+      cpucluster: cpuflpr

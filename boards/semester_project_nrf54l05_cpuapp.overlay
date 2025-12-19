@@ -1,4 +1,7 @@
 //for NPM1300
+
+#include <dt-bindings/regulator/npm13xx.h>
+
 &i2c30 {
     npm1300: pmic@6b {
         compatible = "nordic,npm1300";
@@ -8,5 +11,55 @@
         pmic-int-pin = <1>;
         long-press-reset = "one-button";
         status = "okay";
+
+        npm1300_gpio: gpio-controller {
+            compatible = "nordic,npm1300-gpio";
+            gpio-controller;
+            #gpio-cells = <2>;
+            ngpios = <2>;
+            gpio-reserved-ranges = <2 3>;//not used
+            gpio-line-names = "NPM_GPIO0", "NPM_GPIO1";
+        };
+
+        npm1300_regulators: regulators {
+            compatible = "nordic,npm1300-regulator";
+
+            npm1300_buck1: BUCK1 {
+                regulator-min-microvolt = <3000000>;
+                regulator-max-microvolt = <3300000>;
+                retention-microvolt = <1800000>;
+                regulator-boot-on;//mcu power
+                regulator-min-microamp = <0>;
+                regulator-max-microamp = <10000>;//10 mA to sensors
+            };
+            npm1300_buck2: BUCK2 {
+                regulator-min-microvolt = <3000000>;
+                regulator-max-microvolt = <3300000>;
+                retention-microvolt = <1800000>;
+                regulator-min-microamp = <0>;
+                regulator-max-microamp = <10000>;//10 mA to sensors
+            };
+        };
+
+        npm1300_charger: charger {
+            compatible = "nordic,npm1300-charger";
+            term-microvolt = <4100000>;
+            current-microamp = <300000>;//300 mA charge current
+            // trickle-microvolt = <2500000>;
+            dischg-limit-microamp = <200000>;// 200 mA max discharge
+            vbus-limit-microamp = <500000>;// max input current (charging+leds) 0.5A
+            thermistor-ohms = <10000>;
+            thermistor-beta = <3380>;
+            charging-enable;
+        };
+
+
+        npm1300_leds: leds {
+            compatible = "nordic,npm1300-led";
+            nordic,led0-mode = "host";
+            nordic,led1-mode = "charging";
+            nordic,led2-mode = "error";
+        };
+
     };
 };
