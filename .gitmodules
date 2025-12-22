@@ -1,0 +1,6 @@
+[submodule "stm_drivers/st1vafe3bx-pid"]
+	path = stm_drivers/st1vafe3bx-pid
+	url = https://github.com/STMicroelectronics/st1vafe3bx-pid
+[submodule "stm_drivers/st1vafe6ax-pid"]
+	path = stm_drivers/st1vafe6ax-pid
+	url = https://github.com/STMicroelectronics/st1vafe6ax-pid
