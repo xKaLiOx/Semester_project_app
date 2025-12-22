@@ -7,8 +7,8 @@
         compatible = "nordic,npm1300";
         reg = <0x6b>;
 
-        host-int-gpios = <&gpio1 1 GPIO_ACTIVE_LOW>;
-        pmic-int-pin = <1>;
+        host-int-gpios = <&gpio1 1 GPIO_ACTIVE_LOW>;//not sure, setting only int pin, pwr reset changed internally
+        pmic-int-pin = <1>;//gpio 
         long-press-reset = "one-button";
         status = "okay";
 
@@ -17,7 +17,7 @@
             gpio-controller;
             #gpio-cells = <2>;
             ngpios = <2>;
-            gpio-reserved-ranges = <2 3>;//not used
+            //gpio-reserved-ranges = <2 3>;//not used
             gpio-line-names = "NPM_GPIO0", "NPM_GPIO1";
         };
 
