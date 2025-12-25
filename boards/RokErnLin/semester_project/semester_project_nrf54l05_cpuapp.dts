@@ -23,9 +23,9 @@
 	zephyr,user {
 		pin2-gpios = <&gpio1 6 0>;
 		pin3-gpios = <&gpio1 7 0>;
-		int_6ax_1-gpios = <&gpio0 2 0>;
-		int_6ax_2-gpios = <&gpio0 3 0>;
-		int_3bx-gpios = <&gpio2 0 0>;
+		//int_6ax_1-gpios = <&gpio0 2 0>;
+		//int_6ax_2-gpios = <&gpio0 3 0>;
+		//int_3bx-gpios = <&gpio2 0 0>;
 	};
 };
 
@@ -51,7 +51,7 @@
 };
 
 &gpio2 {
-	status = "okay";
+    status = "okay";
 };
 
 &uart22 {
@@ -67,7 +67,7 @@
 	pinctrl-0 = <&spi20_default>;
 	pinctrl-1 = <&spi20_sleep>;
 	pinctrl-names = "default", "sleep";
-	cs-gpios = <&gpio2 5 0>;
+	cs-gpios = <&gpio2 5 GPIO_ACTIVE_LOW>;
 };
 
 &spi21 {
@@ -75,7 +75,7 @@
 	pinctrl-0 = <&spi21_default>;
 	pinctrl-1 = <&spi21_sleep>;
 	pinctrl-names = "default", "sleep";
-	cs-gpios = <&gpio2 10 0>;
+	cs-gpios = <&gpio2 10 GPIO_ACTIVE_LOW>;
 };
 
 &gpiote20 {
@@ -93,12 +93,6 @@
     pinctrl-0 = <&i2c30_default>;
     pinctrl-1 = <&i2c30_sleep>;
     pinctrl-names = "default", "sleep";
-};
-
-&spi20_default {
-	group1 {
-		psels = <NRF_PSEL(SPIM_SCK, 2, 1)>, <NRF_PSEL(SPIM_MOSI, 2, 4)>, <NRF_PSEL(SPIM_MISO, 2, 2)>;
-	};
 };
 
 &clock {

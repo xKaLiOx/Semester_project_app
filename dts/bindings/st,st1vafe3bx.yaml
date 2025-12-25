@@ -1,0 +1,8 @@
+description: ST1VAFE3BX generic SPI node
+compatible: "st,st1vafe3bx"
+include: spi-device.yaml
+
+properties:
+    irq-gpios:
+      type: phandle-array
+      description: Interrupt GPIO pin

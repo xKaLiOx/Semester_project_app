@@ -1,0 +1,8 @@
+description: ST1VAFE6AX generic SPI node
+compatible: "st,st1vafe6ax"
+include: spi-device.yaml
+
+properties:
+    irq-gpios:
+      type: phandle-array
+      description: Interrupt GPIO pin

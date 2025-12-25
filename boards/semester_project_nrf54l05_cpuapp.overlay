@@ -8,7 +8,7 @@
         reg = <0x6b>;
 
         host-int-gpios = <&gpio1 1 GPIO_ACTIVE_LOW>;//not sure, setting only int pin, pwr reset changed internally
-        pmic-int-pin = <1>;//gpio 
+        pmic-int-pin = <1>;//gpio
         long-press-reset = "one-button";
         status = "okay";
 
@@ -38,6 +38,7 @@
                 retention-microvolt = <1800000>;
                 regulator-min-microamp = <0>;
                 regulator-max-microamp = <10000>;//10 mA to sensors
+                regulator-boot-on;
             };
         };
 
@@ -61,5 +62,32 @@
             nordic,led2-mode = "error";
         };
 
+    };
+};
+&spi20 {
+    status = "okay";
+    cs-gpios = <&gpio1 10 GPIO_ACTIVE_LOW>;//(GPIO_ACTIVE_LOW | (1 << 8) | (1 << 9))>
+    st1vafe3bx: st1vafe3bx@0 {
+        status = "okay";
+        compatible = "st,st1vafe3bx";
+        reg = <0>;
+        spi-max-frequency = <5000000>;
+        // spi-cpol;//logic high state NOT SURE/ datasheet shows both but not a default one
+        // spi-cpha;//captured at rising
+        irq-gpios = <&gpio2 0 0>;
+    };
+};
+
+&spi21 {
+    status = "okay";
+    cs-gpios = <&gpio2 10 (GPIO_ACTIVE_LOW | (1 << 8) | (1 << 9))>;
+    st1vafe6ax: st1vafe6ax@0 {
+        status = "okay";
+        compatible = "st,st1vafe6ax";
+        reg = <0>;
+        spi-max-frequency = <5000000>;
+        // spi-cpol;//logic high state
+        // spi-cpha;//captured at rising
+        irq-gpios = <&gpio0 2 0>, <&gpio0 3 0>;
     };
 };

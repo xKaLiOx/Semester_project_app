@@ -11,6 +11,7 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/drivers/gpio.h>
+#include <hal/nrf_gpio.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -23,9 +24,13 @@
 #include <zephyr/drivers/sensor/npm13xx_charger.h>
 #include <zephyr/drivers/mfd/npm13xx.h>
 
+// include stm generic drivers
+#include "st1vafe_wrapper.h"
+
 // DEFINES
 #define STACKSIZE 1024
 #define PRIORITY 7
+
 // NPM1300
 #define UPDATE_TIME_MS 2000
 #define PMIC_DEVICE DEVICE_DT_GET(DT_NODELABEL(npm1300))
@@ -35,10 +40,10 @@
 #define PMIC_REGULATORS DEVICE_DT_GET(DT_NODELABEL(npm1300_regulators))
 
 // function declarations
-static void event_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
+static void pmic_event_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
 void read_sensors(void);
 bool configure_events(void);
-void pmic_measurements(void);
+void pmic_measurements(void *arg1, void *arg2, void *arg3);
 
 static const struct device *pmic = PMIC_DEVICE;
 static const struct device *leds = PMIC_LEDS;
@@ -56,12 +61,19 @@ struct k_thread pmic_thread;
 
 int main(void)
 {
+
+	uint8_t dummy = 0xAA;
+	st1vafe_init();
+	
+	st1vafe3bx_device_id_get(&st1vafe3bx_ctx, &dummy);
+
 	if (!configure_events())
 	{
 		printk("Error: could not configure events\n");
 		return 0;
 	}
 	printk("PMIC device ok\n");
+
 	// start pmic measurement thread after 1 second
 	k_thread_create(&pmic_thread, pmic_stack,
 					PMIC_STACK_SIZE,
@@ -69,10 +81,9 @@ int main(void)
 					NULL, NULL, NULL,
 					PMIC_PRIORITY, 0,
 					K_MSEC(1000));
-	return 0;//main thread completed
+	return 0; // main thread completed
 }
-
-void pmic_measurements(void)
+void pmic_measurements(void *arg1, void *arg2, void *arg3)
 {
 	while (1)
 	{
@@ -139,7 +150,7 @@ bool configure_events(void)
 	// pmic callback
 	static struct gpio_callback event_cb;
 
-	gpio_init_callback(&event_cb, event_callback,
+	gpio_init_callback(&event_cb, pmic_event_callback,
 					   BIT(NPM13XX_EVENT_VBUS_DETECTED) |
 						   BIT(NPM13XX_EVENT_VBUS_REMOVED) |
 						   BIT(NPM13XX_EVENT_GPIO1_EDGE) |
@@ -162,7 +173,7 @@ bool configure_events(void)
 	return true;
 }
 
-static void event_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+static void pmic_event_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
 	if (pins & BIT(NPM13XX_EVENT_VBUS_DETECTED))
 	{

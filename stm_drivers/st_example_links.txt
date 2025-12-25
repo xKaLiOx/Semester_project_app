@@ -1,0 +1,3 @@
+https://github.com/STMicroelectronics/STMems_Standard_C_drivers/tree/master/st1vafe3bx_STdC/examples
+
+https://github.com/STMicroelectronics/STMems_Standard_C_drivers/tree/master/st1vafe6ax_STdC/examples
