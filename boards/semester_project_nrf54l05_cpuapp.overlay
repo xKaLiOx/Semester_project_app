@@ -80,7 +80,7 @@
 
 &spi21 {
     status = "okay";
-    cs-gpios = <&gpio2 10 (GPIO_ACTIVE_LOW | (1 << 8) | (1 << 9))>;
+    cs-gpios = <&gpio2 10 GPIO_ACTIVE_LOW>;
     st1vafe6ax: st1vafe6ax@0 {
         status = "okay";
         compatible = "st,st1vafe6ax";
