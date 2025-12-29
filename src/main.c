@@ -35,7 +35,7 @@
 #include "st1vafe_wrapper.h"
 
 // DEFINES
-#define SENSORS_OFF
+// #define SENSORS_OFF
 #define PMIC_OFF
 
 // BLUETOOTH
@@ -58,6 +58,8 @@ static void pmic_event_callback(const struct device *dev, struct gpio_callback *
 void read_sensors(void);
 bool configure_events(void);
 void pmic_measurements(void *arg1, void *arg2, void *arg3);
+void bt_nus_handler(void *arg1, void *arg2, void *arg3);
+
 static void adv_work_handler(struct k_work *work);
 static void advertising_start(void);
 static void connected(struct bt_conn *conn, uint8_t err);
@@ -70,6 +72,12 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
 static void send_enabled_cb(enum bt_nus_send_status status);
 static void nus_receive_cb(struct bt_conn *conn,
 						   const uint8_t *const data, uint16_t len);
+
+static bool configure_interrupts(void);
+static void st1vafe3bx_interrupt_cb(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
+static void st1vafe6ax_interrupt_cb1(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
+static void st1vafe6ax_interrupt_cb2(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
+
 typedef enum
 {
 	BT_PKT_PMIC,
@@ -96,13 +104,31 @@ static const struct device *regulators = PMIC_REGULATORS;
 static const struct device *charger = PMIC_CHARGER;
 static const struct device *gpio = PMIC_GPIO;
 
+struct gpio_callback st1vafe3bx_interrupt;
+struct gpio_callback st1vafe6ax_interrupt1;
+struct gpio_callback st1vafe6ax_interrupt2;
+
+struct gpio_dt_spec st1vafe3bx_int_specs =
+	GPIO_DT_SPEC_GET_BY_IDX(DT_NODELABEL(st1vafe3bx), irq_gpios, 0);
+struct gpio_dt_spec st1vafe6ax_int_specs1 =
+	GPIO_DT_SPEC_GET_BY_IDX(DT_NODELABEL(st1vafe6ax), irq_gpios, 0);
+struct gpio_dt_spec st1vafe6ax_int_specs2 =
+	GPIO_DT_SPEC_GET_BY_IDX(DT_NODELABEL(st1vafe6ax), irq_gpios, 1);
+
 static volatile bool vbus_connected;
+
+static volatile bool START_MEASUREMENTS = false;
+static volatile bool RECEIVED_INTERRUPT = false;
 
 // thread for power measurements
 #define PMIC_STACK_SIZE 1024
 #define PMIC_PRIORITY 8
+#define BT_NUS_PRIORITY 6
+#define BT_NUS_STACK_SIZE 1024
 K_THREAD_STACK_DEFINE(pmic_stack, PMIC_STACK_SIZE);
+K_THREAD_STACK_DEFINE(bt_nus_stack, BT_NUS_STACK_SIZE);
 struct k_thread pmic_thread;
+struct k_thread bt_nus_thread;
 
 static struct bt_conn *current_conn;
 static struct k_work adv_work;
@@ -142,7 +168,13 @@ int main(void)
 
 	uint8_t dummy = 0xAA;
 	st1vafe_init();
-	st1vafe3bx_device_id_get(&st1vafe3bx_ctx, &dummy);
+	if (!configure_interrupts())
+	{
+		printk("Error: could not configure sensor interrupts\n");
+		return 0;
+	}
+	printk("ST1VAFE sensors initialized\n");
+	// st1vafe3bx_device_id_get(&st1vafe3bx_ctx, &dummy);
 
 #endif
 
@@ -162,6 +194,14 @@ int main(void)
 					pmic_measurements,
 					NULL, NULL, NULL,
 					PMIC_PRIORITY, 0,
+					K_MSEC(1000));
+
+	// Enable Bluetooth
+	k_thread_create(&bt_nus_thread, bt_nus_stack,
+					BT_NUS_STACK_SIZE,
+					bt_nus_handler,
+					NULL, NULL, NULL,
+					BT_NUS_PRIORITY, 0,
 					K_MSEC(1000));
 
 	err = bt_enable(NULL);
@@ -197,9 +237,26 @@ int main(void)
 
 	return 0; // main thread completed
 }
-void pmic_measurements(void *arg1, void *arg2, void *arg3)
+void bt_nus_handler(void *arg1, void *arg2, void *arg3)
 {
 
+	while (1)
+	{
+		if (RECEIVED_INTERRUPT)
+		{
+			printk("BT NUS handler processing interrupt...\n");
+			RECEIVED_INTERRUPT = false;
+		}
+		printk("BT NUS handler alive...\n");
+		k_msleep(1000);
+		/*
+		TODO: SEMAPHORE USAGE not sleep
+		*/
+	}
+}
+
+void pmic_measurements(void *arg1, void *arg2, void *arg3)
+{
 	printk("Waiting for NUS to be enabled...\n");
 
 	// Block until first client enables notifications
@@ -207,14 +264,14 @@ void pmic_measurements(void *arg1, void *arg2, void *arg3)
 	k_sem_give(&bt_nus_ready);
 	while (1)
 	{
-		// read_sensors();
 		static uint8_t count = 0;
 		count += 11;
 
-		if (current_conn)
+		if (current_conn) // read even when START_MEASUREMENTS is off
 		{
 			if (k_sem_take(&bt_nus_ready, K_NO_WAIT) == 0)
 			{
+				// read_sensors();
 				int err = send_to_bt((const uint8_t *)&count, sizeof(count));
 				k_sem_give(&bt_nus_ready);
 				if (err)
@@ -428,35 +485,13 @@ static void auth_cancel(struct bt_conn *conn)
 static void security_changed(struct bt_conn *conn, bt_security_t level,
 							 enum bt_security_err err)
 {
-	switch (err)
+	if (!err)
 	{
-	case BT_SECURITY_ERR_SUCCESS:
-		printk("  Success\n");
-		break;
-	case BT_SECURITY_ERR_AUTH_FAIL:
-		printk("  Authentication failed\n");
-		break;
-	case BT_SECURITY_ERR_PIN_OR_KEY_MISSING:
-		printk("  PIN/Key missing\n");
-		break;
-	case BT_SECURITY_ERR_OOB_NOT_AVAILABLE:
-		printk("  OOB not available\n");
-		break;
-	case BT_SECURITY_ERR_AUTH_REQUIREMENT:
-		printk("  Authentication requirement not met\n");
-		break;
-	case BT_SECURITY_ERR_PAIR_NOT_SUPPORTED:
-		printk("  Pairing not supported\n");
-		break;
-	case BT_SECURITY_ERR_PAIR_NOT_ALLOWED:
-		printk("  Pairing not allowed\n");
-		break;
-	case BT_SECURITY_ERR_INVALID_PARAM:
-		printk("  Invalid parameter\n");
-		break;
-	default:
-		printk("  Unknown error: %d\n", err);
-		break;
+		printk("Security changed: level %d\n", level);
+	}
+	else
+	{
+		printk("Security failed: level %d err %d\n", level, err);
 	}
 }
 
@@ -474,6 +509,22 @@ static void nus_receive_cb(struct bt_conn *conn,
 		printk("%c", *ptr);
 	}
 	printk("\n");
+	// START/STOP commands
+	if (len == 4 || len == 5)
+	{
+		if (strncmp((const char *)data, "START", 5) == 0)
+		{
+			printk("START command received\n");
+			// start measurements
+			START_MEASUREMENTS = true;
+		}
+		else if (strncmp((const char *)data, "STOP", 4) == 0)
+		{
+			printk("STOP command received\n");
+			// stop measurements
+			START_MEASUREMENTS = false;
+		}
+	}
 }
 
 static void send_enabled_cb(enum bt_nus_send_status status)
@@ -488,4 +539,88 @@ static void send_enabled_cb(enum bt_nus_send_status status)
 		printk("NUS notifications disabled\n");
 		k_sem_reset(&bt_nus_ready); // Reset to not ready
 	}
+}
+
+static bool configure_interrupts(void)
+{
+	// config sensor interrupts
+	if (!gpio_is_ready_dt(&st1vafe3bx_int_specs))
+	{
+		printk("INT GPIO not ready\n");
+		return -1;
+	}
+	if (!gpio_is_ready_dt(&st1vafe6ax_int_specs1))
+	{
+		printk("INT1 GPIO not ready\n");
+		return -1;
+	}
+	if (!gpio_is_ready_dt(&st1vafe6ax_int_specs2))
+	{
+		printk("INT2 GPIO not ready\n");
+		return -1;
+	}
+
+	int ret;
+	// configure pins as input
+	ret = gpio_pin_configure_dt(&st1vafe3bx_int_specs, GPIO_INPUT);
+	if (ret < 0)
+	{
+		printk("Could not configure INT to INPUT GPIO\n");
+		return false;
+	}
+	ret = gpio_pin_configure_dt(&st1vafe6ax_int_specs1, GPIO_INPUT);
+	if (ret < 0)
+	{
+		printk("Could not configure INT1 to INPUT GPIO\n");
+		return false;
+	}
+	ret = gpio_pin_configure_dt(&st1vafe6ax_int_specs2, GPIO_INPUT);
+	if (ret < 0)
+	{
+		printk("Could not configure INT2 to INPUT GPIO\n");
+		return false;
+	}
+
+	// configure interrupts
+	ret = gpio_pin_interrupt_configure_dt(&st1vafe3bx_int_specs, GPIO_INT_EDGE_TO_ACTIVE);
+	if (ret < 0)
+	{
+		printk("Could not configure INT GPIO(%d)\n", ret);
+		return false;
+	}
+	ret = gpio_pin_interrupt_configure_dt(&st1vafe6ax_int_specs1, GPIO_INT_EDGE_TO_ACTIVE);
+	if (ret < 0)
+	{
+		printk("Could not configure INT1 GPIO(%d)\n", ret);
+		return false;
+	}
+	ret = gpio_pin_interrupt_configure_dt(&st1vafe6ax_int_specs2, GPIO_INT_EDGE_TO_ACTIVE);
+	if (ret < 0)
+	{
+		printk("Could not configure INT2 GPIO(%d)\n", ret);
+		return false;
+	}
+
+	gpio_init_callback(&st1vafe3bx_interrupt, st1vafe3bx_interrupt_cb, BIT(st1vafe3bx_int_specs.pin));
+	gpio_init_callback(&st1vafe6ax_interrupt1, st1vafe6ax_interrupt_cb1, BIT(st1vafe6ax_int_specs1.pin));
+	gpio_init_callback(&st1vafe6ax_interrupt2, st1vafe6ax_interrupt_cb2, BIT(st1vafe6ax_int_specs2.pin));
+
+	gpio_add_callback(st1vafe3bx_int_specs.port, &st1vafe3bx_interrupt);
+	gpio_add_callback(st1vafe6ax_int_specs1.port, &st1vafe6ax_interrupt1);
+	gpio_add_callback(st1vafe6ax_int_specs2.port, &st1vafe6ax_interrupt2);
+
+	return true;
+}
+
+static void st1vafe3bx_interrupt_cb(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+	RECEIVED_INTERRUPT = true;
+}
+static void st1vafe6ax_interrupt_cb1(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+	RECEIVED_INTERRUPT = true;
+}
+static void st1vafe6ax_interrupt_cb2(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+	RECEIVED_INTERRUPT = true;
 }
