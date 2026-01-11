@@ -78,25 +78,20 @@ static void st1vafe3bx_interrupt_cb(const struct device *dev, struct gpio_callba
 static void st1vafe6ax_interrupt_cb1(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
 static void st1vafe6ax_interrupt_cb2(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
 
-typedef enum
-{
-	BT_PKT_PMIC,
-	BT_PKT_SENSOR,
-	BT_PKT_STATUS,
-} bt_pkt_type_t;
-
-typedef struct
-{
-	bt_pkt_type_t type;
-	uint8_t len;
-	uint8_t payload[20];
-} bt_packet_t;
-
 static struct bt_nus_cb nus_cb = {
 	.received = nus_receive_cb,
 	.sent = NULL,
 	.send_enabled = send_enabled_cb,
 };
+
+typedef struct pmic_data_struct
+{
+	struct sensor_value voltage;
+	struct sensor_value current;
+	struct sensor_value charger_status;
+	struct sensor_value charger_error;
+	struct sensor_value vbus_present;
+} pmic_data;
 
 static const struct device *pmic = PMIC_DEVICE;
 static const struct device *leds = PMIC_LEDS;
@@ -119,6 +114,9 @@ static volatile bool vbus_connected;
 
 static volatile bool START_MEASUREMENTS = false;
 static volatile bool RECEIVED_INTERRUPT = false;
+static volatile bool PMIC_MEASUREMENTS_DONE = false;
+
+pmic_data pmic_measurement_data;
 
 // thread for power measurements
 #define PMIC_STACK_SIZE 1024
@@ -159,14 +157,17 @@ static struct bt_conn_auth_info_cb conn_auth_info_callbacks = {
 	.pairing_complete = NULL,
 	.pairing_failed = NULL};
 
-static K_SEM_DEFINE(bt_nus_ready, 0, 1);
+static K_SEM_DEFINE(SEM_PMIC_MEASURE, 0, 1);
+static K_SEM_DEFINE(SEM_BT_NUS_SEND, 0, 1);
+
+K_MUTEX_DEFINE(MUTEX_RECEIVED_INTERRUPT);
+K_MUTEX_DEFINE(MUTEX_DATA_UPDATE);
 
 int main(void)
 {
 	int err;
 #ifndef SENSORS_OFF
 
-	uint8_t dummy = 0xAA;
 	st1vafe_init();
 	if (!configure_interrupts())
 	{
@@ -239,19 +240,66 @@ int main(void)
 }
 void bt_nus_handler(void *arg1, void *arg2, void *arg3)
 {
-
+	printk("BT NUS handler started...\n");
+	int8_t err = 0;
+	pmic_data local_copy; // Local buffer
+	bool should_send = false;
 	while (1)
 	{
-		if (RECEIVED_INTERRUPT)
+		if (k_sem_take(&SEM_BT_NUS_SEND, K_MSEC(500)) == 0) // no data between 500 ms
 		{
-			printk("BT NUS handler processing interrupt...\n");
-			RECEIVED_INTERRUPT = false;
+			read_sensors();
+			if (err)
+			{
+				printk("Send failed: %d\n", err);
+			}
+
+			k_mutex_lock(&MUTEX_RECEIVED_INTERRUPT, K_FOREVER);
+			if (RECEIVED_INTERRUPT)
+			{
+				printk("BT NUS handler processing interrupt...\n");
+				RECEIVED_INTERRUPT = false;
+			}
+			k_mutex_unlock(&MUTEX_RECEIVED_INTERRUPT);
+
+			k_mutex_lock(&MUTEX_DATA_UPDATE, K_FOREVER);
+			should_send = (PMIC_MEASUREMENTS_DONE && START_MEASUREMENTS);
+
+			if (should_send)
+			{
+				memcpy(&local_copy, &pmic_measurement_data, sizeof(local_copy));
+				PMIC_MEASUREMENTS_DONE = false;
+			}
+			k_mutex_unlock(&MUTEX_DATA_UPDATE);
+
+			if (should_send)
+			{
+				// send over bluetooth (mutex protected)
+				uint8_t buffer[255];
+				int len = snprintf((char *)buffer, sizeof(buffer),
+								   "V:%d.%03d I:%s%d.%03d CHG_STAT:%d ERR:%d VBUS:%s\n",
+								   local_copy.voltage.val1, local_copy.voltage.val2 / 1000,
+								   ((local_copy.current.val1 < 0) || (local_copy.current.val2 < 0)) ? "-" : "",
+								   abs(local_copy.current.val1), abs(local_copy.current.val2) / 100,
+								   local_copy.charger_status.val1,
+								   local_copy.charger_error.val1,
+								   local_copy.vbus_present.val1 ? "connected" : "disconnected");
+
+				err = send_to_bt(buffer, len);
+				if (err)
+				{
+					printk("Send failed: %d\n", err);
+				}
+			}
+			else
+			{
+				printk("No data to send over BT NUS (measurements not ready or not started)\n");
+			}
 		}
-		printk("BT NUS handler alive...\n");
-		k_msleep(1000);
-		/*
-		TODO: SEMAPHORE USAGE not sleep
-		*/
+		else
+		{
+			printk("No data to send over BT NUS (500ms)\n");
+		}
 	}
 }
 
@@ -260,20 +308,18 @@ void pmic_measurements(void *arg1, void *arg2, void *arg3)
 	printk("Waiting for NUS to be enabled...\n");
 
 	// Block until first client enables notifications
-	k_sem_take(&bt_nus_ready, K_FOREVER);
-	k_sem_give(&bt_nus_ready);
+	k_sem_take(&SEM_PMIC_MEASURE, K_FOREVER);
+	k_sem_give(&SEM_PMIC_MEASURE);
+	static uint8_t err = 0;
 	while (1)
 	{
-		static uint8_t count = 0;
-		count += 11;
 
 		if (current_conn) // read even when START_MEASUREMENTS is off
 		{
-			if (k_sem_take(&bt_nus_ready, K_NO_WAIT) == 0)
+			if (k_sem_take(&SEM_PMIC_MEASURE, K_NO_WAIT) == 0)
 			{
-				// read_sensors();
-				int err = send_to_bt((const uint8_t *)&count, sizeof(count));
-				k_sem_give(&bt_nus_ready);
+				read_sensors();
+				k_sem_give(&SEM_PMIC_MEASURE);
 				if (err)
 				{
 					printk("Send failed: %d\n", err);
@@ -288,11 +334,17 @@ void pmic_measurements(void *arg1, void *arg2, void *arg3)
 
 void read_sensors(void)
 {
-	struct sensor_value volt;
-	struct sensor_value current;
-	struct sensor_value error;
-	struct sensor_value status;
-	struct sensor_value vbus_present;
+	static struct sensor_value volt;
+	static struct sensor_value current;
+	static struct sensor_value error;
+	static struct sensor_value status;
+	static struct sensor_value vbus_present;
+
+	if (PMIC_MEASUREMENTS_DONE)
+	{
+		printk("PMIC measurements haven't been processed yet, skipping new read.\n");
+		return; // already done
+	}
 
 	sensor_sample_fetch(charger);
 	sensor_channel_get(charger, SENSOR_CHAN_GAUGE_VOLTAGE, &volt);
@@ -304,11 +356,20 @@ void read_sensors(void)
 					(enum sensor_attribute)SENSOR_ATTR_NPM13XX_CHARGER_VBUS_PRESENT,
 					&vbus_present);
 
-	printk("V: %d.%03d ", volt.val1, volt.val2 / 1000);
+	if (k_mutex_lock(&MUTEX_DATA_UPDATE, K_NO_WAIT) == 0)
+	{
+		pmic_measurement_data.voltage = volt;
+		pmic_measurement_data.current = current;
+		pmic_measurement_data.charger_status = status;
+		pmic_measurement_data.charger_error = error;
+		pmic_measurement_data.vbus_present = vbus_present;
+		PMIC_MEASUREMENTS_DONE = true;
+		k_mutex_unlock(&MUTEX_DATA_UPDATE);
+	}
 
+	printk("V: %d.%03d ", volt.val1, volt.val2 / 1000);
 	printk("I: %s%d.%04d ", ((current.val1 < 0) || (current.val2 < 0)) ? "-" : "",
 		   abs(current.val1), abs(current.val2) / 100);
-
 	printk("Charger Status: %d, Error: %d, VBUS: %s\n", status.val1, error.val1,
 		   vbus_present.val1 ? "connected" : "disconnected");
 }
@@ -445,7 +506,8 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	printk("Disconnected, reason 0x%02x %s\n", reason, bt_hci_err_to_str(reason));
 
-	k_sem_reset(&bt_nus_ready);
+	k_sem_reset(&SEM_PMIC_MEASURE);
+	k_sem_reset(&SEM_BT_NUS_SEND);
 	if (current_conn)
 	{
 		bt_conn_unref(current_conn);
@@ -532,12 +594,14 @@ static void send_enabled_cb(enum bt_nus_send_status status)
 	if (status == BT_NUS_SEND_STATUS_ENABLED)
 	{
 		printk("NUS notifications enabled\n");
-		k_sem_give(&bt_nus_ready); // Signal ready
+		k_sem_give(&SEM_PMIC_MEASURE); // Signal ready
+		k_sem_give(&SEM_BT_NUS_SEND);
 	}
 	else
 	{
 		printk("NUS notifications disabled\n");
-		k_sem_reset(&bt_nus_ready); // Reset to not ready
+		k_sem_reset(&SEM_PMIC_MEASURE); // Reset to not ready
+		k_sem_reset(&SEM_BT_NUS_SEND);
 	}
 }
 
@@ -614,13 +678,19 @@ static bool configure_interrupts(void)
 
 static void st1vafe3bx_interrupt_cb(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
+	k_mutex_lock(&MUTEX_RECEIVED_INTERRUPT, K_NO_WAIT);
 	RECEIVED_INTERRUPT = true;
+	k_mutex_unlock(&MUTEX_RECEIVED_INTERRUPT);
 }
 static void st1vafe6ax_interrupt_cb1(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
+	k_mutex_lock(&MUTEX_RECEIVED_INTERRUPT, K_NO_WAIT);
 	RECEIVED_INTERRUPT = true;
+	k_mutex_unlock(&MUTEX_RECEIVED_INTERRUPT);
 }
 static void st1vafe6ax_interrupt_cb2(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
+	k_mutex_lock(&MUTEX_RECEIVED_INTERRUPT, K_NO_WAIT);
 	RECEIVED_INTERRUPT = true;
+	k_mutex_unlock(&MUTEX_RECEIVED_INTERRUPT);
 }
