@@ -35,8 +35,8 @@
 #include "st1vafe_wrapper.h"
 
 // DEFINES
-// #define SENSORS_OFF
-#define PMIC_OFF
+// #define PMIC_OFF
+#define SENSORS_OFF
 
 // BLUETOOTH
 #define DEVICE_NAME CONFIG_BT_DEVICE_NAME
@@ -118,7 +118,7 @@ static volatile bool PMIC_MEASUREMENTS_DONE = false;
 
 pmic_data pmic_measurement_data;
 
-// thread for power measurements
+// threads
 #define PMIC_STACK_SIZE 1024
 #define PMIC_PRIORITY 8
 #define BT_NUS_PRIORITY 6
@@ -128,6 +128,7 @@ K_THREAD_STACK_DEFINE(bt_nus_stack, BT_NUS_STACK_SIZE);
 struct k_thread pmic_thread;
 struct k_thread bt_nus_thread;
 
+//bluetooth
 static struct bt_conn *current_conn;
 static struct k_work adv_work;
 
@@ -166,18 +167,6 @@ K_MUTEX_DEFINE(MUTEX_DATA_UPDATE);
 int main(void)
 {
 	int err;
-#ifndef SENSORS_OFF
-
-	st1vafe_init();
-	if (!configure_interrupts())
-	{
-		printk("Error: could not configure sensor interrupts\n");
-		return 0;
-	}
-	printk("ST1VAFE sensors initialized\n");
-	// st1vafe3bx_device_id_get(&st1vafe3bx_ctx, &dummy);
-
-#endif
 
 #ifndef PMIC_OFF
 	printk("PMIC/NPM1300 off\n");
@@ -187,6 +176,22 @@ int main(void)
 		return 0;
 	}
 	printk("PMIC device ok\n");
+
+	//set sensor voltage to 3.3V
+#endif
+
+#ifndef SENSORS_OFF
+
+	st1vafe_init();
+	if (!configure_interrupts())
+	{
+		printk("Error: could not configure sensor interrupts\n");
+		return 0;
+	}
+	printk("ST1VAFE sensors initialized\n");
+
+	uint8_t dummy[] = "0xAA";
+	st1vafe3bx_device_id_get(&st1vafe3bx_ctx, &dummy);
 #endif
 
 	// start pmic measurement thread after 1 second
@@ -195,14 +200,6 @@ int main(void)
 					pmic_measurements,
 					NULL, NULL, NULL,
 					PMIC_PRIORITY, 0,
-					K_MSEC(1000));
-
-	// Enable Bluetooth
-	k_thread_create(&bt_nus_thread, bt_nus_stack,
-					BT_NUS_STACK_SIZE,
-					bt_nus_handler,
-					NULL, NULL, NULL,
-					BT_NUS_PRIORITY, 0,
 					K_MSEC(1000));
 
 	err = bt_enable(NULL);
@@ -233,6 +230,14 @@ int main(void)
 		return 0;
 	}
 
+	// Enable Bluetooth
+	k_thread_create(&bt_nus_thread, bt_nus_stack,
+					BT_NUS_STACK_SIZE,
+					bt_nus_handler,
+					NULL, NULL, NULL,
+					BT_NUS_PRIORITY, 0,
+					K_MSEC(1000));
+
 	k_work_init(&adv_work, adv_work_handler);
 	advertising_start();
 
@@ -248,12 +253,6 @@ void bt_nus_handler(void *arg1, void *arg2, void *arg3)
 	{
 		if (k_sem_take(&SEM_BT_NUS_SEND, K_MSEC(500)) == 0) // no data between 500 ms
 		{
-			read_sensors();
-			if (err)
-			{
-				printk("Send failed: %d\n", err);
-			}
-
 			k_mutex_lock(&MUTEX_RECEIVED_INTERRUPT, K_FOREVER);
 			if (RECEIVED_INTERRUPT)
 			{
@@ -401,6 +400,8 @@ bool configure_events(void)
 		printk("GPIO device not ready.\n");
 		return false;
 	}
+	//inits from .dts files, not tested
+	//mfd_npm13xx_init(pmic);
 
 	// pmic callback
 	static struct gpio_callback event_cb;
