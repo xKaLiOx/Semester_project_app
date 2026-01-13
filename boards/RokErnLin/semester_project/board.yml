@@ -5,4 +5,4 @@ board:
   - name: nrf54l05
     variants:
     - name: xip
-      cpucluster: cpuflpr
+      cpucluster: cpuapp

@@ -1,0 +1,12 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "nrf-connect",
+            "request": "launch",
+            "name": "Debug nRF App",
+            "config": "${workspaceFolder}/build_debug/zephyr/zephyr.elf",
+            "runToEntryPoint": "main"
+        }
+    ]
+}

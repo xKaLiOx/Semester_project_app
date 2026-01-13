@@ -2,6 +2,39 @@
 
 #include <dt-bindings/regulator/npm13xx.h>
 
+
+/ {
+    /* Define the LFRC node if it's missing from the SoC dtsi */
+    lfrc: lfrc {
+        compatible = "fixed-clock";
+        #clock-cells = <0>;
+        clock-frequency = <32768>;
+        status = "okay";
+    };
+};
+
+&lfxo {
+    status = "disabled";
+};
+
+&hfxo {
+    status = "okay";
+    load-capacitors = "internal";
+    load-capacitance-femtofarad = <0x3a98>;
+};
+
+&grtc {
+    /* Reference the lfrc node you defined above */
+    clocks = <&lfrc>, <&pclk>;
+    clock-names = "lfclock", "hfclock";
+    status = "okay";
+};
+
+&clock {
+    status = "disabled";
+};
+
+
 &i2c30 {
     npm1300: pmic@6b {
         compatible = "nordic,npm1300";
