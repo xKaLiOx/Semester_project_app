@@ -40,7 +40,7 @@
         compatible = "nordic,npm1300";
         reg = <0x6b>;
 
-        host-int-gpios = <&gpio1 1 GPIO_ACTIVE_LOW>;//not sure, setting only int pin, pwr reset changed internally
+        host-int-gpios = <&gpio1 1 GPIO_ACTIVE_LOW>;
         pmic-int-pin = <1>;//gpio
         long-press-reset = "one-button";
         status = "okay";
@@ -63,15 +63,14 @@
                 retention-microvolt = <1800000>;
                 regulator-boot-on;//mcu power
                 regulator-min-microamp = <0>;
-                regulator-max-microamp = <10000>;//10 mA to sensors
+                regulator-max-microamp = <50000>;//50 mA to sensors
             };
             npm1300_buck2: BUCK2 {
                 regulator-min-microvolt = <3000000>;
                 regulator-max-microvolt = <3300000>;
                 retention-microvolt = <1800000>;
                 regulator-min-microamp = <0>;
-                regulator-max-microamp = <10000>;//10 mA to sensors
-                regulator-boot-on;
+                regulator-max-microamp = <50000>;//50 mA to sensors
             };
         };
 
@@ -79,20 +78,21 @@
             compatible = "nordic,npm1300-charger";
             term-microvolt = <4100000>;
             current-microamp = <300000>;//300 mA charge current
-            // trickle-microvolt = <2500000>;
+            trickle-microvolt = <2900000>;
             dischg-limit-microamp = <200000>;// 200 mA max discharge
-            vbus-limit-microamp = <500000>;// max input current (charging+leds) 0.5A
-            thermistor-ohms = <10000>;
+            vbus-limit-microamp = <400000>;// max input current (charging+leds) 0.5A
+            thermistor-ohms = <0>;
             thermistor-beta = <3380>;
             charging-enable;
+            vbatlow-charge-enable;
         };
 
 
         npm1300_leds: leds {
             compatible = "nordic,npm1300-led";
-            nordic,led0-mode = "host";
-            nordic,led1-mode = "charging";
-            nordic,led2-mode = "error";
+            nordic,led0-mode = "error";
+            nordic,led1-mode = "host";
+            nordic,led2-mode = "charging";
         };
 
     };

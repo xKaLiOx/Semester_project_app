@@ -23,26 +23,25 @@
 #include <string.h>
 
 #include <zephyr/drivers/sensor.h>
-
+#include <zephyr/drivers/sensor/npm13xx_charger.h>
 #include <zephyr/drivers/regulator.h>
 #include <zephyr/dt-bindings/regulator/npm13xx.h>
 #include <zephyr/drivers/led.h>
-#include <zephyr/drivers/sensor/npm13xx_charger.h>
 #include <zephyr/drivers/mfd/npm13xx.h>
+
+// DEFINES
+// #define PMIC_OFF
+#define SENSORS_OFF
+// #define DEBUG_LOOP
 
 // // include stm generic drivers
 #ifdef SENSORS_OFF
 #include "st1vafe_wrapper.h"
 #endif
-// DEFINES
-//#define PMIC_OFF
-#define SENSORS_OFF
-// infinite loop gpio debug
-// #define DEBUG_LOOP
 
 // // BLUETOOTH
-// #define DEVICE_NAME CONFIG_BT_DEVICE_NAME
-// #define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1)
+#define DEVICE_NAME CONFIG_BT_DEVICE_NAME
+#define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1)
 
 #define STACKSIZE 1024
 #define PRIORITY 7
@@ -54,14 +53,16 @@
 #define PMIC_GPIO DEVICE_DT_GET(DT_NODELABEL(npm1300_gpio))
 #define PMIC_CHARGER DEVICE_DT_GET(DT_NODELABEL(npm1300_charger))
 #define PMIC_REGULATORS DEVICE_DT_GET(DT_NODELABEL(npm1300_regulators))
+#define PMIC_REGULATOR_BUCK1 DEVICE_DT_GET(DT_NODELABEL(npm1300_buck1))
+#define PMIC_REGULATOR_BUCK2 DEVICE_DT_GET(DT_NODELABEL(npm1300_buck2))
 
 // function declarations
 static void pmic_event_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
 void read_sensors(void);
 bool configure_events(void);
 void pmic_measurements(void *arg1, void *arg2, void *arg3);
-// void bt_nus_handler(void *arg1, void *arg2, void *arg3);
 
+// void bt_nus_handler(void *arg1, void *arg2, void *arg3);
 // static void adv_work_handler(struct k_work *work);
 // static void advertising_start(void);
 // static void connected(struct bt_conn *conn, uint8_t err);
@@ -97,9 +98,13 @@ typedef struct pmic_data_struct
 	struct sensor_value vbus_present;
 } pmic_data;
 
+struct sensor_value charger_value;
+
 static const struct device *pmic = PMIC_DEVICE;
 static const struct device *leds = PMIC_LEDS;
-static const struct device *regulators = PMIC_REGULATORS;
+
+static const struct device *regulator_buck1 = PMIC_REGULATOR_BUCK1;
+static const struct device *regulator_buck2 = PMIC_REGULATOR_BUCK2;
 static const struct device *charger = PMIC_CHARGER;
 static const struct device *gpio = PMIC_GPIO;
 
@@ -168,136 +173,135 @@ static K_SEM_DEFINE(SEM_BT_NUS_SEND, 0, 1);
 K_MUTEX_DEFINE(MUTEX_RECEIVED_INTERRUPT);
 K_MUTEX_DEFINE(MUTEX_DATA_UPDATE);
 
-// // DEBUG GPIO
-//static const struct gpio_dt_spec pin2 = GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), pin2_gpios);
-//static const struct gpio_dt_spec pin3 = GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), pin3_gpios);
+// // DEBUG GPIOS
+static const struct gpio_dt_spec pin2 = GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), pin2_gpios);
+static const struct gpio_dt_spec pin3 = GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), pin3_gpios);
 
 int main(void)
 {
-    int err;
+	int err;
 
 #ifdef DEBUG_LOOP
-    // FOR DEBUGGING PURPOSES
+	// FOR DEBUGGING PURPOSES
 
-    if (!gpio_is_ready_dt(&pin2))
-    {
-        printk("Error: pin2 GPIO device not ready\n");
-        return 0;
-    }
+	if (!gpio_is_ready_dt(&pin2))
+	{
+		printk("Error: pin2 GPIO device not ready\n");
+		return 0;
+	}
 
-    if (!gpio_is_ready_dt(&pin3))
-    {
-        printk("Error: pin3 GPIO device not ready\n");
-        return 0;
-    }
+	if (!gpio_is_ready_dt(&pin3))
+	{
+		printk("Error: pin3 GPIO device not ready\n");
+		return 0;
+	}
 
-    ret = gpio_pin_configure_dt(&pin2, GPIO_OUTPUT_ACTIVE);
-    if (ret < 0)
-    {
-        printk("Error configuring pin2: %d\n", ret);
-        return 0;
-    }
+	ret = gpio_pin_configure_dt(&pin2, GPIO_OUTPUT_ACTIVE);
+	if (ret < 0)
+	{
+		printk("Error configuring pin2: %d\n", ret);
+		return 0;
+	}
 
-    ret = gpio_pin_configure_dt(&pin3, GPIO_OUTPUT_ACTIVE);
-    if (ret < 0)
-    {
-        printk("Error configuring pin3: %d\n", ret);
-        return 0;
-    }
+	ret = gpio_pin_configure_dt(&pin3, GPIO_OUTPUT_ACTIVE);
+	if (ret < 0)
+	{
+		printk("Error configuring pin3: %d\n", ret);
+		return 0;
+	}
 
-    printk("GPIO debug pins configured successfully\n");
+	printk("GPIO debug pins configured successfully\n");
 
-    int counter = 0;
-    while (1)
-    {
-        gpio_pin_toggle_dt(&pin2);
+	int counter = 0;
+	while (1)
+	{
+		gpio_pin_toggle_dt(&pin2);
 
-        if (counter % 2 == 0)
-        {
-            gpio_pin_toggle_dt(&pin3);
-        }
+		if (counter % 2 == 0)
+		{
+			gpio_pin_toggle_dt(&pin3);
+		}
 
-        printk("Counter: %d\n", counter++);
+		printk("Counter: %d\n", counter++);
 
-        k_sleep(K_MSEC(250)); // 500ms delay = ~1Hz toggle for pin2
-    }
+		k_sleep(K_MSEC(250)); // 500ms delay = ~1Hz toggle for pin2
+	}
 #endif
-    // FOR DEBUGGING PURPOSES
+	// FOR DEBUGGING PURPOSES
 
-    #ifndef PMIC_OFF
-    	printk("PMIC/NPM1300 off\n");
-    	if (!configure_events())
-    	{
-    		printk("Error: could not configure events\n");
-    		return 0;
-    	}
-    	printk("PMIC device ok\n");
+#ifndef PMIC_OFF
+	if (!configure_events())
+	{
+		printk("Error: could not configure events\n");
+		return 0;
+	}
+	printk("PMIC device ok\n");
 
-    	// set sensor voltage to 3.3V
-    #endif
+	// set sensor voltage to 3.3V
+#endif
 
-    // #ifndef SENSORS_OFF
+#ifndef SENSORS_OFF
 
-    // 	st1vafe_init();
-    // 	if (!configure_interrupts())
-    // 	{
-    // 		printk("Error: could not configure sensor interrupts\n");
-    // 		return 0;
-    // 	}
-    // 	printk("ST1VAFE sensors initialized\n");
+	st1vafe_init();
+	if (!configure_interrupts())
+	{
+		printk("Error: could not configure sensor interrupts\n");
+		return 0;
+	}
+	printk("ST1VAFE sensors initialized\n");
 
-    // 	uint8_t dummy[] = "0xAA";
-    // 	st1vafe3bx_device_id_get(&st1vafe3bx_ctx, &dummy);
-    // #endif
+	uint8_t dummy[] = "0xAA";
+	st1vafe3bx_device_id_get(&st1vafe3bx_ctx, &dummy);
+#endif
 
-    	// start pmic measurement thread after 1 second
-    	k_thread_create(&pmic_thread, pmic_stack,
-    					PMIC_STACK_SIZE,
-    					pmic_measurements,
-    					NULL, NULL, NULL,
-    					PMIC_PRIORITY, 0,
-    					K_MSEC(1000));
+	// start pmic measurement thread after 1 second
+	k_thread_create(&pmic_thread, pmic_stack,
+					PMIC_STACK_SIZE,
+					pmic_measurements,
+					NULL, NULL, NULL,
+					PMIC_PRIORITY, 0,
+					K_MSEC(1000));
 
-    // 	err = bt_enable(NULL);
-    // 	if (err)
-    // 	{
-    // 		printk("BLE enable failed (err: %d)", err);
-    // 		return 0;
-    // 	}
+	// 	err = bt_enable(NULL);
+	// 	if (err)
+	// 	{
+	// 		printk("BLE enable failed (err: %d)", err);
+	// 		return 0;
+	// 	}
 
-    // 	err = bt_conn_auth_cb_register(&conn_auth_callbacks);
-    // 	if (err != 0)
-    // 	{
-    // 		printk("Authentication cb register error (err %d)\n", err);
-    // 		return -1;
-    // 	}
-    // 	err = bt_conn_auth_info_cb_register(&conn_auth_info_callbacks);
-    // 	if (err != 0)
-    // 	{
-    // 		printk("Authentication cb register info error (err %d)\n", err);
-    // 		return -1;
-    // 	}
+	// 	err = bt_conn_auth_cb_register(&conn_auth_callbacks);
+	// 	if (err != 0)
+	// 	{
+	// 		printk("Authentication cb register error (err %d)\n", err);
+	// 		return -1;
+	// 	}
+	// 	err = bt_conn_auth_info_cb_register(&conn_auth_info_callbacks);
+	// 	if (err != 0)
+	// 	{
+	// 		printk("Authentication cb register info error (err %d)\n", err);
+	// 		return -1;
+	// 	}
 
-    // 	// communication between phone
-    // 	err = bt_nus_init(&nus_cb);
-    // 	if (err)
-    // 	{
-    // 		printk("Failed to initialize BT NUS shell (err: %d)\n", err);
-    // 		return 0;
-    // 	}
+	// 	// communication between phone
+	// 	err = bt_nus_init(&nus_cb);
+	// 	if (err)
+	// 	{
+	// 		printk("Failed to initialize BT NUS shell (err: %d)\n", err);
+	// 		return 0;
+	// 	}
 
-    // 	// Enable Bluetooth
-    // 	k_thread_create(&bt_nus_thread, bt_nus_stack,
-    // 					BT_NUS_STACK_SIZE,
-    // 					bt_nus_handler,
-    // 					NULL, NULL, NULL,
-    // 					BT_NUS_PRIORITY, 0,
-    // 					K_MSEC(1000));
+	// 	// Enable Bluetooth
+	// 	k_thread_create(&bt_nus_thread, bt_nus_stack,
+	// 					BT_NUS_STACK_SIZE,
+	// 					bt_nus_handler,
+	// 					NULL, NULL, NULL,
+	// 					BT_NUS_PRIORITY, 0,
+	// 					K_MSEC(1000));
 
-    // 	k_work_init(&adv_work, adv_work_handler);
-    // 	advertising_start();
+	// 	k_work_init(&adv_work, adv_work_handler);
+	// 	advertising_start();
 
-    // 	return 0; // main thread completed
+	// 	return 0; // main thread completed
 }
 
 // void bt_nus_handler(void *arg1, void *arg2, void *arg3)
@@ -372,18 +376,17 @@ void pmic_measurements(void *arg1, void *arg2, void *arg3)
 
 		// if (current_conn) // read even when START_MEASUREMENTS is off
 		// {
-			// if (k_sem_take(&SEM_PMIC_MEASURE, K_NO_WAIT) == 0)
-			// {
-				read_sensors();
-				// k_sem_give(&SEM_PMIC_MEASURE);
-				if (err)
-				{
-					printk("Send failed: %d\n", err);
-				}
-			// }
+		// if (k_sem_take(&SEM_PMIC_MEASURE, K_NO_WAIT) == 0)
+		// {
+		read_sensors();
+		// k_sem_give(&SEM_PMIC_MEASURE);
+		if (err)
+		{
+			printk("Send failed: %d\n", err);
+		}
+		// }
 		//}
 		k_msleep(UPDATE_TIME_MS);
-
 	}
 }
 
@@ -418,7 +421,7 @@ void read_sensors(void)
 		pmic_measurement_data.charger_status = status;
 		pmic_measurement_data.charger_error = error;
 		pmic_measurement_data.vbus_present = vbus_present;
-		PMIC_MEASUREMENTS_DONE = true;
+		// PMIC_MEASUREMENTS_DONE = true;
 		k_mutex_unlock(&MUTEX_DATA_UPDATE);
 	}
 
@@ -427,6 +430,10 @@ void read_sensors(void)
 		   abs(current.val1), abs(current.val2) / 100);
 	printk("Charger Status: %d, Error: %d, VBUS: %s\n", status.val1, error.val1,
 		   vbus_present.val1 ? "connected" : "disconnected");
+
+	led_on(leds, 1); // turn on led2 to indicate pmic read
+	k_msleep(100);
+	led_off(leds, 1);
 }
 
 bool configure_events(void)
@@ -436,11 +443,57 @@ bool configure_events(void)
 		printk("Pmic device not ready.\n");
 		return false;
 	}
-	if (!device_is_ready(regulators))
+	int32_t volt_uv;
+	if (device_is_ready(regulator_buck1))
 	{
-		printk("Regulator device not ready.\n");
-		return false;
+		regulator_common_data_init(regulator_buck1);
+		if (!regulator_get_voltage(regulator_buck1, &volt_uv))
+		{
+			printk("Regulator buck1 set at %u mV.\n", volt_uv / 1000);
+			if (volt_uv < 3200000)
+			{
+				int ret = regulator_set_voltage(regulator_buck1, 3200000, 3300000);
+				if (ret)
+				{
+					printk("Failed to enable buck1 to 3.3V: %d\n", ret);
+				}
+				if (!regulator_enable(regulator_buck1))
+				{
+					printk("Regulator buck1 enabled and set to 3.2-3.3V.\n");
+				}
+			}
+		}
 	}
+	else
+	{
+		printk("Regulator 2 device not ready.\n");
+	}
+
+	if (device_is_ready(regulator_buck2))
+	{
+		regulator_common_data_init(regulator_buck2);
+		if (!regulator_get_voltage(regulator_buck2, &volt_uv))
+		{
+			printk("Regulator buck2 set at %u mV.\n", volt_uv / 1000);
+			if (volt_uv < 3200000)
+			{
+				int ret = regulator_set_voltage(regulator_buck2, 3200000, 3300000);
+				if (ret)
+				{
+					printk("Failed to enable buck2 to 3.2-3.3V: %d\n", ret);
+				}
+				if (!regulator_enable(regulator_buck2))
+				{
+					printk("Regulator buck2 enabled and set to 3.2-3.3V.\n");
+				}
+			}
+		}
+	}
+	else
+	{
+		printk("Regulator 2 device not ready.\n");
+	}
+
 	if (!device_is_ready(leds))
 	{
 		printk("Error: led device is not ready\n");
@@ -454,6 +507,16 @@ bool configure_events(void)
 	if (!device_is_ready(gpio))
 	{
 		printk("GPIO device not ready.\n");
+		return false;
+	}
+	if (!device_is_ready(regulator_buck1))
+	{
+		printk("Regulator buck1 device not ready.\n");
+		return false;
+	}
+	if (!device_is_ready(regulator_buck2))
+	{
+		printk("Regulator buck2 device not ready.\n");
 		return false;
 	}
 	// inits from .dts files, not tested
@@ -474,7 +537,9 @@ bool configure_events(void)
 
 	// read initial vbus status
 	struct sensor_value val;
-	int ret = sensor_attr_get(charger, SENSOR_CHAN_CURRENT, SENSOR_ATTR_UPPER_THRESH, &val);
+	int ret = sensor_attr_get(charger, (enum sensor_channel)SENSOR_CHAN_NPM13XX_CHARGER_VBUS_STATUS,
+							  (enum sensor_attribute)SENSOR_ATTR_NPM13XX_CHARGER_VBUS_PRESENT,
+							  &val);
 	if (ret < 0)
 	{
 		return false;
@@ -482,6 +547,9 @@ bool configure_events(void)
 
 	vbus_connected = (val.val1 != 0) || (val.val2 != 0);
 	printk("Initial Vbus status: %s\n", vbus_connected ? "connected" : "disconnected");
+
+	/* Enable charging if driver is ready */
+
 	return true;
 }
 
@@ -754,13 +822,6 @@ static void st1vafe6ax_interrupt_cb2(const struct device *dev, struct gpio_callb
 }
 
 #endif
-
-
-
-
-
-
-
 
 /*
  * Copyright (c) 2025 Nordic Semiconductor ASA
