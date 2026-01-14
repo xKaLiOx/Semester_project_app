@@ -31,11 +31,11 @@
 
 // DEFINES
 // #define PMIC_OFF
-#define SENSORS_OFF
+// #define SENSORS_OFF
 // #define DEBUG_LOOP
 
 // // include stm generic drivers
-#ifdef SENSORS_OFF
+#ifndef SENSORS_OFF
 #include "st1vafe_wrapper.h"
 #endif
 
@@ -108,16 +108,16 @@ static const struct device *regulator_buck2 = PMIC_REGULATOR_BUCK2;
 static const struct device *charger = PMIC_CHARGER;
 static const struct device *gpio = PMIC_GPIO;
 
-// struct gpio_callback st1vafe3bx_interrupt;
-// struct gpio_callback st1vafe6ax_interrupt1;
-// struct gpio_callback st1vafe6ax_interrupt2;
+struct gpio_callback st1vafe3bx_interrupt;
+struct gpio_callback st1vafe6ax_interrupt1;
+struct gpio_callback st1vafe6ax_interrupt2;
 
-// struct gpio_dt_spec st1vafe3bx_int_specs =
-// 	GPIO_DT_SPEC_GET_BY_IDX(DT_NODELABEL(st1vafe3bx), irq_gpios, 0);
-// struct gpio_dt_spec st1vafe6ax_int_specs1 =
-// 	GPIO_DT_SPEC_GET_BY_IDX(DT_NODELABEL(st1vafe6ax), irq_gpios, 0);
-// struct gpio_dt_spec st1vafe6ax_int_specs2 =
-// 	GPIO_DT_SPEC_GET_BY_IDX(DT_NODELABEL(st1vafe6ax), irq_gpios, 1);
+static const struct gpio_dt_spec st1vafe3bx_int_specs =
+	GPIO_DT_SPEC_GET_BY_IDX(DT_NODELABEL(st1vafe3bx), irq_gpios, 0);
+static const struct gpio_dt_spec st1vafe6ax_int_specs1 =
+	GPIO_DT_SPEC_GET_BY_IDX(DT_NODELABEL(st1vafe6ax), irq_gpios, 0);
+static const struct gpio_dt_spec st1vafe6ax_int_specs2 =
+	GPIO_DT_SPEC_GET_BY_IDX(DT_NODELABEL(st1vafe6ax), irq_gpios, 1);
 
 static volatile bool vbus_connected;
 
@@ -179,10 +179,8 @@ static const struct gpio_dt_spec pin3 = GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), p
 
 int main(void)
 {
-	int err;
-
-#ifdef DEBUG_LOOP
-	// FOR DEBUGGING PURPOSES
+	int ret;
+	// FOR DEBUGGING PURPOSES GPIOS
 
 	if (!gpio_is_ready_dt(&pin2))
 	{
@@ -212,6 +210,7 @@ int main(void)
 
 	printk("GPIO debug pins configured successfully\n");
 
+#ifdef DEBUG_LOOP
 	int counter = 0;
 	while (1)
 	{
@@ -227,7 +226,6 @@ int main(void)
 		k_sleep(K_MSEC(250)); // 500ms delay = ~1Hz toggle for pin2
 	}
 #endif
-	// FOR DEBUGGING PURPOSES
 
 #ifndef PMIC_OFF
 	if (!configure_events())
@@ -236,22 +234,141 @@ int main(void)
 		return 0;
 	}
 	printk("PMIC device ok\n");
-
-	// set sensor voltage to 3.3V
 #endif
 
 #ifndef SENSORS_OFF
 
-	st1vafe_init();
-	if (!configure_interrupts())
+	// apeit be funkciju ir wrapperio
+	//  if (!st1vafe_init())
+	//  {
+	//  	printk("ST1VAFE sensors intialized\n");
+	//  }
+	if (!configure_interrupts()) // 3bx pertrauktis atjungta
 	{
 		printk("Error: could not configure sensor interrupts\n");
 		return 0;
 	}
-	printk("ST1VAFE sensors initialized\n");
 
-	uint8_t dummy[] = "0xAA";
-	st1vafe3bx_device_id_get(&st1vafe3bx_ctx, &dummy);
+	k_msleep(100);
+#define SPIOPS (SPI_WORD_SET(8) | SPI_TRANSFER_MSB | SPI_MODE_CPOL | SPI_MODE_CPHA)
+	const struct spi_dt_spec spi21_6ax_main = SPI_DT_SPEC_GET(DT_NODELABEL(st1vafe6ax), SPIOPS, 0);
+	const struct spi_dt_spec spi21_3bx_main = SPI_DT_SPEC_GET(DT_NODELABEL(st1vafe3bx), SPIOPS, 0);
+
+	if (!spi_is_ready_dt(&spi21_3bx_main))
+	{
+		printk("ST1VAFE3BX SPI device not ready!\n");
+		return -ENODEV;
+	}
+	/////////////////
+	uint8_t tx_buf_data[2] = {ST1VAFE3BX_WHO_AM_I | 0x80, 0x00};
+	uint8_t rx_buf_data[2];
+
+	struct spi_buf tx_buf = {
+		.buf = tx_buf_data,
+		.len = 2,
+	};
+
+	struct spi_buf rx_buf = {
+		.buf = rx_buf_data,
+		.len = 2,
+	};
+
+	struct spi_buf_set tx = {
+		.buffers = &tx_buf,
+		.count = 1,
+	};
+
+	struct spi_buf_set rx = {
+		.buffers = &rx_buf,
+		.count = 1,
+	};
+
+	while (1)
+	{
+		k_msleep(1000);
+		printk("Attempting transfer 3BX...\n");
+		ret = spi_transceive_dt(&spi21_3bx_main, &tx, &rx);
+
+		if (ret != 0)
+		{
+			printk("SPI Error: %d\n", ret);
+		}
+		else
+		{
+			printk("WHO_AM_I: 0x%02X\n", rx_buf_data[1]); // 1 registras siuksle
+		}
+	}
+
+	// 	if (!spi_is_ready_dt(&spi21_6ax_main))
+	// 	{
+	// 		printk("ST1VAFE6AX SPI device not ready!\n");
+	// 		return -ENODEV;
+	// 	}
+	// 	/////////////////
+	// 	uint8_t tx_buf_data[2] = {ST1VAFE6AX_WHO_AM_I | 0x80, 0x00};
+	// 	uint8_t rx_buf_data[2];
+
+	// 	struct spi_buf tx_buf = {
+	// 		.buf = tx_buf_data,
+	// 		.len = 2,
+	// 	};
+
+	// 	struct spi_buf rx_buf = {
+	// 		.buf = rx_buf_data,
+	// 		.len = 2,
+	// 	};
+
+	// 	struct spi_buf_set tx = {
+	// 		.buffers = &tx_buf,
+	// 		.count = 1,
+	// 	};
+
+	// 	struct spi_buf_set rx = {
+	// 		.buffers = &rx_buf,
+	// 		.count = 1,
+	// 	};
+
+	// while(1) {
+	//     k_msleep(1000);
+	//     printk("Attempting transfer...\n");
+	//     ret = spi_transceive_dt(&spi21_6ax_main, &tx, &rx);
+
+	//     if (ret != 0) {
+	//         printk("SPI Error: %d\n", ret);
+	//     } else {
+	//         printk("WHO_AM_I: 0x%02X\n", rx_buf_data[1]);//1 registras siuksle siuksle
+	//     }
+	// }
+
+	/////////////////
+
+	// if (!st1vafe6ax_device_id_get(&st1vafe6ax_ctx, &dummy))
+	// {
+	// 	printk("ST1VAFE6AX detected successfully\n");
+	// }
+	// else
+	// {
+	// 	printk("ST1VAFE6AX not detected\n");
+	// }
+	// printk("ST1VAFE6AX WHO_AM_I: %c\n", dummy);
+	// if (dummy == 0x71)
+	// {
+	// 	printk("ST1VAFE6AX WHO_AM_I correct\n");
+	// }
+	// if(!st1vafe3bx_device_id_get(&st1vafe3bx_ctx, &dummy))
+	// {
+	// 	printk("ST1VAFE3BX detected successfully\n");
+	// }
+	// else
+	// {
+	// 	printk("ST1VAFE3BX not detected\n");
+	// 	return 0;
+	// }
+	// printk("ST1VAFE3BX WHO_AM_I: %c\n", dummy);
+	// if(dummy == 0x48)
+	// {
+	// 	printk("ST1VAFE3BX WHO_AM_I correct\n");
+	// }
 #endif
 
 	// start pmic measurement thread after 1 second
@@ -262,6 +379,7 @@ int main(void)
 					PMIC_PRIORITY, 0,
 					K_MSEC(1000));
 
+	//  int err;
 	// 	err = bt_enable(NULL);
 	// 	if (err)
 	// 	{
@@ -734,6 +852,7 @@ static void pmic_event_callback(const struct device *dev, struct gpio_callback *
 static bool configure_interrupts(void)
 {
 	// config sensor interrupts
+
 	if (!gpio_is_ready_dt(&st1vafe3bx_int_specs))
 	{
 		printk("INT GPIO not ready\n");
@@ -772,12 +891,13 @@ static bool configure_interrupts(void)
 	}
 
 	// configure interrupts
-	ret = gpio_pin_interrupt_configure_dt(&st1vafe3bx_int_specs, GPIO_INT_EDGE_TO_ACTIVE);
-	if (ret < 0)
-	{
-		printk("Could not configure INT GPIO(%d)\n", ret);
-		return false;
-	}
+
+	// ret = gpio_pin_interrupt_configure_dt(&st1vafe3bx_int_specs, GPIO_INT_EDGE_TO_ACTIVE);
+	// if (ret < 0)
+	// {
+	// 	printk("Could not configure INT GPIO(%d)\n", ret);
+	// 	return false;
+	// }
 	ret = gpio_pin_interrupt_configure_dt(&st1vafe6ax_int_specs1, GPIO_INT_EDGE_TO_ACTIVE);
 	if (ret < 0)
 	{
@@ -791,11 +911,11 @@ static bool configure_interrupts(void)
 		return false;
 	}
 
-	gpio_init_callback(&st1vafe3bx_interrupt, st1vafe3bx_interrupt_cb, BIT(st1vafe3bx_int_specs.pin));
+	// gpio_init_callback(&st1vafe3bx_interrupt, st1vafe3bx_interrupt_cb, BIT(st1vafe3bx_int_specs.pin));
 	gpio_init_callback(&st1vafe6ax_interrupt1, st1vafe6ax_interrupt_cb1, BIT(st1vafe6ax_int_specs1.pin));
 	gpio_init_callback(&st1vafe6ax_interrupt2, st1vafe6ax_interrupt_cb2, BIT(st1vafe6ax_int_specs2.pin));
 
-	gpio_add_callback(st1vafe3bx_int_specs.port, &st1vafe3bx_interrupt);
+	// gpio_add_callback(st1vafe3bx_int_specs.port, &st1vafe3bx_interrupt);
 	gpio_add_callback(st1vafe6ax_int_specs1.port, &st1vafe6ax_interrupt1);
 	gpio_add_callback(st1vafe6ax_int_specs2.port, &st1vafe6ax_interrupt2);
 
@@ -822,75 +942,3 @@ static void st1vafe6ax_interrupt_cb2(const struct device *dev, struct gpio_callb
 }
 
 #endif
-
-/*
- * Copyright (c) 2025 Nordic Semiconductor ASA
- *
- * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
- */
-
-// #include <zephyr/kernel.h>    /* k_busy_wait() */
-// #include <zephyr/sys_clock.h> /* USEC_PER_MSEC */
-// #include <zephyr/logging/log.h>
-// #include <zephyr/logging/log_ctrl.h>
-// #include <hal/nrf_gpio.h>
-// #include "nrfx_clock.h"
-
-// static void led_init(void)
-// {
-//     nrf_gpio_cfg_output(NRF_PIN_PORT_TO_PIN_NUMBER(4, 1));
-// }
-// static void led_on(void)
-// {
-//     nrf_gpio_pin_write(NRF_PIN_PORT_TO_PIN_NUMBER(4, 1), BOARD_LED_ACTIVE_STATE);
-// }
-// static void led_off(void)
-// {
-//     nrf_gpio_pin_write(NRF_PIN_PORT_TO_PIN_NUMBER(4, 1), !BOARD_LED_ACTIVE_STATE);
-// }
-
-// int main(void)
-// {
-// 	led_init();
-// 	while (true)
-// 	{
-// 		/* Turn the LED on */
-// 		led_on();
-// 		k_busy_wait(500 * USEC_PER_MSEC);
-// 		/* Turn the LED off */
-// 		led_off();
-// 		k_busy_wait(500 * USEC_PER_MSEC);
-// 	}
-
-// 	return 0;
-// }
-// #define GPIO_ACTIVE_HIGH 1
-// #define TEST_LED NRF_PIN_PORT_TO_PIN_NUMBER(7, 1)
-
-// static void led_init(void) {
-//     nrf_gpio_cfg_output(TEST_LED);
-//     nrf_gpio_pin_write(TEST_LED, !GPIO_ACTIVE_HIGH);
-// }
-
-// static void led_blink(int count) {
-//     for (int i = 0; i < count; i++) {
-//         nrf_gpio_pin_write(TEST_LED, GPIO_ACTIVE_HIGH);
-//         k_busy_wait(100 * USEC_PER_MSEC); // 100ms ON
-//         nrf_gpio_pin_write(TEST_LED, !GPIO_ACTIVE_HIGH);
-//         k_busy_wait(100 * USEC_PER_MSEC); // 100ms OFF
-//     }
-//     k_busy_wait(1000 * USEC_PER_MSEC); // 1 second gap between patterns
-// }
-
-// int main(void) {
-//     led_init();
-//     led_blink(3); // Blink 3 times at startup
-//     while (true) {
-//         nrf_gpio_pin_write(TEST_LED, GPIO_ACTIVE_HIGH);
-//         k_busy_wait(500 * USEC_PER_MSEC);
-//         nrf_gpio_pin_write(TEST_LED, !GPIO_ACTIVE_HIGH);
-//         k_busy_wait(500 * USEC_PER_MSEC);
-//     }
-
-//     return 0;
-// }

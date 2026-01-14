@@ -11,7 +11,8 @@
 #include "st1vafe6ax_reg.h"
 #include "st1vafe3bx_reg.h"
 
-#define SPIOP SPI_WORD_SET(8) | SPI_TRANSFER_MSB // MSB first, 8 bits per word
+//#define SPIOP SPI_WORD_SET(8) | SPI_TRANSFER_MSB // MSB first, 8 bits per word
+#define SPIOP (SPI_WORD_SET(8) | SPI_TRANSFER_MSB | SPI_MODE_CPOL | SPI_MODE_CPHA)
 
 extern const struct spi_dt_spec spi20_3bx;
 extern const struct spi_dt_spec spi21_6ax;

@@ -64,6 +64,5 @@ int st1vafe_init(void)
         printk("ST1VAFE6AX SPI device not ready!\n");
         return -ENODEV;
     }
-
     return 0;
 }
