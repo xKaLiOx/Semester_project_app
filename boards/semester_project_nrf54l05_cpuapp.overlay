@@ -61,11 +61,12 @@
                 regulator-min-microvolt = <3000000>;
                 regulator-max-microvolt = <3300000>;
                 retention-microvolt = <1800000>;
-                regulator-boot-on;//mcu power
                 regulator-min-microamp = <0>;
                 regulator-max-microamp = <50000>;//50 mA to sensors
+                regulator-boot-off;
             };
             npm1300_buck2: BUCK2 {
+                regulator-boot-on;//mcu power
                 regulator-min-microvolt = <3000000>;
                 regulator-max-microvolt = <3300000>;
                 retention-microvolt = <1800000>;

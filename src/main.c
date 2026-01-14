@@ -243,24 +243,70 @@ int main(void)
 	//  {
 	//  	printk("ST1VAFE sensors intialized\n");
 	//  }
+
+
 	if (!configure_interrupts()) // 3bx pertrauktis atjungta
 	{
 		printk("Error: could not configure sensor interrupts\n");
 		return 0;
 	}
 
-	k_msleep(100);
 #define SPIOPS (SPI_WORD_SET(8) | SPI_TRANSFER_MSB | SPI_MODE_CPOL | SPI_MODE_CPHA)
 	const struct spi_dt_spec spi21_6ax_main = SPI_DT_SPEC_GET(DT_NODELABEL(st1vafe6ax), SPIOPS, 0);
 	const struct spi_dt_spec spi21_3bx_main = SPI_DT_SPEC_GET(DT_NODELABEL(st1vafe3bx), SPIOPS, 0);
 
-	if (!spi_is_ready_dt(&spi21_3bx_main))
+	// if (!spi_is_ready_dt(&spi21_3bx_main))
+	// {
+	// 	printk("ST1VAFE3BX SPI device not ready!\n");
+	// 	return -ENODEV;
+	// }
+	// /////////////////
+	// uint8_t tx_buf_data[2] = {ST1VAFE3BX_WHO_AM_I | 0x80, 0x00};
+	// uint8_t rx_buf_data[2];
+
+	// struct spi_buf tx_buf = {
+	// 	.buf = tx_buf_data,
+	// 	.len = 2,
+	// };
+
+	// struct spi_buf rx_buf = {
+	// 	.buf = rx_buf_data,
+	// 	.len = 2,
+	// };
+
+	// struct spi_buf_set tx = {
+	// 	.buffers = &tx_buf,
+	// 	.count = 1,
+	// };
+
+	// struct spi_buf_set rx = {
+	// 	.buffers = &rx_buf,
+	// 	.count = 1,
+	// };
+
+	// while (1)
+	// {
+	// 	k_msleep(1000);
+	// 	printk("Attempting transfer 3BX...\n");
+	// 	ret = spi_transceive_dt(&spi21_3bx_main, &tx, &rx);
+
+	// 	if (ret != 0)
+	// 	{
+	// 		printk("SPI Error: %d\n", ret);
+	// 	}
+	// 	else
+	// 	{
+	// 		printk("WHO_AM_I: 0x%02X\n", rx_buf_data[1]); // 1 registras siuksle
+	// 	}
+	// }
+
+	if (!spi_is_ready_dt(&spi21_6ax_main))
 	{
-		printk("ST1VAFE3BX SPI device not ready!\n");
+		printk("ST1VAFE6AX SPI device not ready!\n");
 		return -ENODEV;
 	}
 	/////////////////
-	uint8_t tx_buf_data[2] = {ST1VAFE3BX_WHO_AM_I | 0x80, 0x00};
+	uint8_t tx_buf_data[2] = {ST1VAFE6AX_WHO_AM_I | 0x80, 0x00};
 	uint8_t rx_buf_data[2];
 
 	struct spi_buf tx_buf = {
@@ -286,8 +332,8 @@ int main(void)
 	while (1)
 	{
 		k_msleep(1000);
-		printk("Attempting transfer 3BX...\n");
-		ret = spi_transceive_dt(&spi21_3bx_main, &tx, &rx);
+		printk("Attempting transfer...\n");
+		ret = spi_transceive_dt(&spi21_6ax_main, &tx, &rx);
 
 		if (ret != 0)
 		{
@@ -295,50 +341,9 @@ int main(void)
 		}
 		else
 		{
-			printk("WHO_AM_I: 0x%02X\n", rx_buf_data[1]); // 1 registras siuksle
+			printk("WHO_AM_I: 0x%02X\n", rx_buf_data[1]); // 1 registras siuksle siuksle
 		}
 	}
-
-	// 	if (!spi_is_ready_dt(&spi21_6ax_main))
-	// 	{
-	// 		printk("ST1VAFE6AX SPI device not ready!\n");
-	// 		return -ENODEV;
-	// 	}
-	// 	/////////////////
-	// 	uint8_t tx_buf_data[2] = {ST1VAFE6AX_WHO_AM_I | 0x80, 0x00};
-	// 	uint8_t rx_buf_data[2];
-
-	// 	struct spi_buf tx_buf = {
-	// 		.buf = tx_buf_data,
-	// 		.len = 2,
-	// 	};
-
-	// 	struct spi_buf rx_buf = {
-	// 		.buf = rx_buf_data,
-	// 		.len = 2,
-	// 	};
-
-	// 	struct spi_buf_set tx = {
-	// 		.buffers = &tx_buf,
-	// 		.count = 1,
-	// 	};
-
-	// 	struct spi_buf_set rx = {
-	// 		.buffers = &rx_buf,
-	// 		.count = 1,
-	// 	};
-
-	// while(1) {
-	//     k_msleep(1000);
-	//     printk("Attempting transfer...\n");
-	//     ret = spi_transceive_dt(&spi21_6ax_main, &tx, &rx);
-
-	//     if (ret != 0) {
-	//         printk("SPI Error: %d\n", ret);
-	//     } else {
-	//         printk("WHO_AM_I: 0x%02X\n", rx_buf_data[1]);//1 registras siuksle siuksle
-	//     }
-	// }
 
 	/////////////////
 
