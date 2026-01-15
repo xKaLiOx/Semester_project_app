@@ -9,10 +9,10 @@
 
 	chosen {
 		zephyr,console = &uart22;
-		zephyr,shell-uart = &uart22;
-		zephyr,uart-mcumgr = &uart22;
-		zephyr,bt-mon-uart = &uart22;
-		zephyr,bt-c2h-uart = &uart22;
+		// zephyr,shell-uart = &uart22;
+		// zephyr,uart-mcumgr = &uart22;
+		// zephyr,bt-mon-uart = &uart22;
+		// zephyr,bt-c2h-uart = &uart22;
 
 		zephyr,code-partition = &slot0_partition;
 		zephyr,sram = &cpuapp_sram;
@@ -59,7 +59,7 @@
     pinctrl-0 = <&uart22_default>;
     pinctrl-1 = <&uart22_sleep>;
     pinctrl-names = "default", "sleep";
-    current-speed = <115200>;
+    current-speed = <921600>;//115200
 };
 
 &spi20 {

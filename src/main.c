@@ -32,7 +32,7 @@
 
 // DEFINES
 // #define PMIC_OFF
-#define SENSORS_OFF
+// #define SENSORS_OFF
 // #define DEBUG_LOOP
 
 // // include stm generic drivers
@@ -63,6 +63,8 @@ void read_sensors(void);
 bool configure_events(void);
 void pmic_measurements(void *arg1, void *arg2, void *arg3);
 
+void sensor_thread_entry(void *arg1, void *arg2, void *arg3);
+
 void bt_nus_handler(void *arg1, void *arg2, void *arg3);
 static void adv_work_handler(struct k_work *work);
 static void advertising_start(void);
@@ -84,9 +86,13 @@ static ssize_t bt_read_hr_rp_values(struct bt_conn *conn,
 									const struct bt_gatt_attr *attr,
 									void *buf, uint16_t len,
 									uint16_t offset);
+
 #ifndef SENSORS_OFF
+void st1vafe6ax_vafe_read_data(void);
+static void tx_com(uint8_t *tx_buffer, uint16_t len);
+
 static bool configure_interrupts(void);
-static void st1vafe3bx_interrupt_cb(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
+// static void st1vafe3bx_interrupt_cb(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
 static void st1vafe6ax_interrupt_cb1(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
 static void st1vafe6ax_interrupt_cb2(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
 #endif
@@ -142,10 +148,27 @@ pmic_data pmic_measurement_data;
 #define PMIC_PRIORITY 8
 #define BT_NUS_PRIORITY 6
 #define BT_NUS_STACK_SIZE 1024
+
+#define SENSOR_PRIORITY 6
+#define SENSOR_STACK_SIZE 2048
+
 K_THREAD_STACK_DEFINE(pmic_stack, PMIC_STACK_SIZE);
 K_THREAD_STACK_DEFINE(bt_nus_stack, BT_NUS_STACK_SIZE);
+
+K_THREAD_STACK_DEFINE(sensor_stack, SENSOR_STACK_SIZE);
+
 struct k_thread pmic_thread;
 struct k_thread bt_nus_thread;
+struct k_thread sensor_thread;
+
+// sensor 6ax
+static uint8_t tx_buffer[1000];
+int16_t data_raw_ah_bio;
+
+static st1vafe6ax_ah_bio_mode_t vafe_mode;
+static st1vafe6ax_filt_settling_mask_t filt_settling_mask;
+
+static uint8_t drdy_event = 0;
 
 // bluetooth
 
@@ -289,7 +312,6 @@ int main(void)
 
 #ifndef SENSORS_OFF
 
-	// apeit be funkciju ir wrapperio
 	if (!st1vafe_init())
 	{
 		printk("ST1VAFE sensors intialized\n");
@@ -301,130 +323,32 @@ int main(void)
 		return 0;
 	}
 
-#define SPIOPS (SPI_WORD_SET(8) | SPI_TRANSFER_MSB | SPI_MODE_CPOL | SPI_MODE_CPHA)
-	const struct spi_dt_spec spi21_6ax_main = SPI_DT_SPEC_GET(DT_NODELABEL(st1vafe6ax), SPIOPS, 0);
-	const struct spi_dt_spec spi21_3bx_main = SPI_DT_SPEC_GET(DT_NODELABEL(st1vafe3bx), SPIOPS, 0);
+	// uint8_t dummy;
+	// if (!st1vafe6ax_device_id_get(&st1vafe6ax_ctx, &dummy))
+	// {
+	// 	printk("ST1VAFE6AX Device ID read: 0x%02X\n", dummy);
+	// 	printk("ST1VAFE6AX detected successfully\n");
+	// }
+	// else
+	// {
+	// 	printk("ST1VAFE6AX not detected\n");
+	// }
 
-	if (!spi_is_ready_dt(&spi21_3bx_main))
+	if (!st1vafe6ax_reset_set(&st1vafe6ax_ctx, ST1VAFE6AX_GLOBAL_RST))
 	{
-		printk("ST1VAFE3BX SPI device not ready!\n");
-		return -ENODEV;
-	}
-	/////////////////
-	uint8_t tx_buf_data[2] = {ST1VAFE3BX_WHO_AM_I | 0x80, 0x00};
-	uint8_t rx_buf_data[2];
-
-	struct spi_buf tx_buf = {
-		.buf = tx_buf_data,
-		.len = 2,
-	};
-
-	struct spi_buf rx_buf = {
-		.buf = rx_buf_data,
-		.len = 2,
-	};
-
-	struct spi_buf_set tx = {
-		.buffers = &tx_buf,
-		.count = 1,
-	};
-
-	struct spi_buf_set rx = {
-		.buffers = &rx_buf,
-		.count = 1,
-	};
-
-	while (1)
-	{
-		k_msleep(1000);
-		printk("Attempting transfer 3BX...\n");
-		ret = spi_transceive_dt(&spi21_3bx_main, &tx, &rx);
-
-		if (ret != 0)
-		{
-			printk("SPI Error: %d\n", ret);
-		}
-		else
-		{
-			printk("WHO_AM_I: 0x%02X\n", rx_buf_data[1]); // 1 registras siuksle
-		}
+		printk("ST1VAFE6AX global reset\n");
 	}
 
-	if (!spi_is_ready_dt(&spi21_6ax_main))
-	{
-		printk("ST1VAFE6AX SPI device not ready!\n");
-		return -ENODEV;
-	}
-	/////////////////
-	uint8_t tx_buf_data[2] = {ST1VAFE6AX_WHO_AM_I | 0x80, 0x00};
-	uint8_t rx_buf_data[2];
-
-	struct spi_buf tx_buf = {
-		.buf = tx_buf_data,
-		.len = 2,
-	};
-
-	struct spi_buf rx_buf = {
-		.buf = rx_buf_data,
-		.len = 2,
-	};
-
-	struct spi_buf_set tx = {
-		.buffers = &tx_buf,
-		.count = 1,
-	};
-
-	struct spi_buf_set rx = {
-		.buffers = &rx_buf,
-		.count = 1,
-	};
-
-	while (1)
-	{
-		k_msleep(1000);
-		printk("Attempting transfer...\n");
-		ret = spi_transceive_dt(&spi21_6ax_main, &tx, &rx);
-
-		if (ret != 0)
-		{
-			printk("SPI Error: %d\n", ret);
-		}
-		else
-		{
-			printk("WHO_AM_I: 0x%02X\n", rx_buf_data[1]); // 1 registras siuksle
-		}
-	}
-
-	///////////////
-
-	if (!st1vafe6ax_device_id_get(&st1vafe6ax_ctx, &dummy))
-	{
-		printk("ST1VAFE6AX detected successfully\n");
-	}
-	else
-	{
-		printk("ST1VAFE6AX not detected\n");
-	}
-	printk("ST1VAFE6AX WHO_AM_I: %c\n", dummy);
-	if (dummy == 0x71)
-	{
-		printk("ST1VAFE6AX WHO_AM_I correct\n");
-	}
-	if (!st1vafe3bx_device_id_get(&st1vafe3bx_ctx, &dummy))
-	{
-		printk("ST1VAFE3BX detected successfully\n");
-	}
-	else
-	{
-		printk("ST1VAFE3BX not detected\n");
-		return 0;
-	}
-	printk("ST1VAFE3BX WHO_AM_I: %c\n", dummy);
-	if (dummy == 0x48)
-	{
-		printk("ST1VAFE3BX WHO_AM_I correct\n");
-	}
 #endif
+
+	k_thread_create(&sensor_thread, sensor_stack,
+					SENSOR_STACK_SIZE,
+					sensor_thread_entry,
+					NULL, NULL, NULL,
+					SENSOR_PRIORITY, 0,
+					K_NO_WAIT);
+
+	return 0;//STOP NEW THREADS ONLY SENSOR
 
 	// start pmic measurement thread after 1 second
 	k_thread_create(&pmic_thread, pmic_stack,
@@ -486,12 +410,23 @@ int main(void)
 	return 0; // main thread completed
 }
 
+void sensor_thread_entry(void *arg1, void *arg2, void *arg3)
+{
+	printk("Sensor thread started...\n");
+
+	while (1)
+	{
+		st1vafe6ax_vafe_read_data();
+		k_msleep(1000);
+	}
+}
+
 void bt_nus_handler(void *arg1, void *arg2, void *arg3)
 {
 	printk("BT NUS handler started...\n");
 	int8_t err = 0;
 	pmic_data local_copy; // Local buffer
-	bool should_send = false;
+	// bool should_send = false;
 	bool send_bt_pmic_data = false;
 	static bool last_conn = false;
 	while (1)
@@ -602,11 +537,10 @@ void pmic_measurements(void *arg1, void *arg2, void *arg3)
 				k_msleep(100);
 				led_off(leds, 1);
 
-				if(nus_tx_connected)
+				if (nus_tx_connected)
 				{
 					k_sem_give(&SEM_BT_NUS_SEND); // give signal to send from bt nus thread
 				}
-					
 			}
 		}
 		k_msleep(UPDATE_TIME_MS);
@@ -971,7 +905,7 @@ static ssize_t bt_read_battery_values(struct bt_conn *conn,
 	}
 	else if (attr->user_data == &pmic_measurement_data.current)
 	{
-		len_buf = snprintf(buffer, sizeof(buffer), "%03d", current.val2 / 1000);//mA
+		len_buf = snprintf(buffer, sizeof(buffer), "%03d", current.val2 / 1000); // mA
 		return bt_gatt_attr_read(conn, attr, buf, len, offset,
 								 buffer, len_buf);
 	}
@@ -1033,12 +967,12 @@ static bool configure_interrupts(void)
 
 	int ret;
 	// configure pins as input
-	ret = gpio_pin_configure_dt(&st1vafe3bx_int_specs, GPIO_INPUT);
-	if (ret < 0)
-	{
-		printk("Could not configure INT to INPUT GPIO\n");
-		return false;
-	}
+	// ret = gpio_pin_configure_dt(&st1vafe3bx_int_specs, GPIO_INPUT);
+	// if (ret < 0)
+	// {
+	// 	printk("Could not configure INT to INPUT GPIO\n");
+	// 	return false;
+	// }
 	ret = gpio_pin_configure_dt(&st1vafe6ax_int_specs1, GPIO_INPUT);
 	if (ret < 0)
 	{
@@ -1084,23 +1018,107 @@ static bool configure_interrupts(void)
 	return true;
 }
 
-static void st1vafe3bx_interrupt_cb(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+// static void st1vafe3bx_interrupt_cb(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+// {
+// 	k_mutex_lock(&MUTEX_RECEIVED_INTERRUPT, K_NO_WAIT);
+// 	RECEIVED_INTERRUPT = true;
+// 	k_mutex_unlock(&MUTEX_RECEIVED_INTERRUPT);
+// }
+
+void st1vafe6ax_vafe_read_data(void)
 {
-	k_mutex_lock(&MUTEX_RECEIVED_INTERRUPT, K_NO_WAIT);
-	RECEIVED_INTERRUPT = true;
-	k_mutex_unlock(&MUTEX_RECEIVED_INTERRUPT);
+	uint8_t ret;
+	uint8_t whoamI;
+
+	st1vafe6ax_reset_t rst;
+
+	st1vafe6ax_data_ready_t data_ready;
+	st1vafe6ax_pin_int_route_t pin_int = {0};
+
+	k_msleep(10); // wait for sensor to boot up
+
+	// printk("ST1VAFE6AX vAFE reading\n");
+	st1vafe6ax_device_id_get(&st1vafe6ax_ctx, &whoamI);
+
+	printk("WHOAMI: 0x%X\n", whoamI);
+
+	if (whoamI != ST1VAFE6AX_ID)
+		while (1)
+			;
+
+	/* Restore default configuration */
+	st1vafe6ax_reset_set(&st1vafe6ax_ctx, ST1VAFE6AX_RESTORE_CTRL_REGS);
+	do
+	{
+		st1vafe6ax_reset_get(&st1vafe6ax_ctx, &rst);
+	} while (rst != ST1VAFE6AX_READY);
+
+	/* Enable Block Data Update */
+	st1vafe6ax_block_data_update_set(&st1vafe6ax_ctx, PROPERTY_ENABLE);
+
+	st1vafe6ax_xl_data_rate_set(&st1vafe6ax_ctx, ST1VAFE6AX_XL_ODR_AT_15Hz);
+	st1vafe6ax_xl_full_scale_set(&st1vafe6ax_ctx, ST1VAFE6AX_2g);
+
+	/* Configure filtering chain */
+	filt_settling_mask.drdy = PROPERTY_ENABLE;
+	filt_settling_mask.irq_xl = PROPERTY_ENABLE;
+	filt_settling_mask.irq_g = PROPERTY_ENABLE;
+	st1vafe6ax_filt_settling_mask_set(&st1vafe6ax_ctx, filt_settling_mask);
+	st1vafe6ax_filt_xl_lp2_set(&st1vafe6ax_ctx, PROPERTY_ENABLE);
+	st1vafe6ax_filt_xl_lp2_bandwidth_set(&st1vafe6ax_ctx, ST1VAFE6AX_XL_STRONG);
+
+	/* Enable VAFE function */
+	vafe_mode.ah_bio1_en = 1;
+	st1vafe6ax_ah_bio_mode_set(&st1vafe6ax_ctx, vafe_mode);
+
+	pin_int.drdy_ah_bio = PROPERTY_ENABLE;
+	st1vafe6ax_pin_int2_route_set(&st1vafe6ax_ctx, pin_int);
+	/* Read samples in polling mode (no int) */
+	while (1)
+	{
+		if (drdy_event > 0)
+		{
+			drdy_event = 0;
+
+			/* Read output only if new values are available */
+			st1vafe6ax_flag_data_ready_get(&st1vafe6ax_ctx, &data_ready);
+			if (data_ready.drdy_ah_bio)
+			{
+				float_t vafe_mv;
+
+				st1vafe6ax_ah_bio_raw_get(&st1vafe6ax_ctx, &data_raw_ah_bio);
+				vafe_mv = st1vafe6ax_from_lsb_to_mv(data_raw_ah_bio);
+
+				snprintf((char *)tx_buffer, sizeof(tx_buffer), "vAFE [mV]:%6.3f\r\n", vafe_mv);
+
+				// snprintf((char *)tx_buffer, sizeof(tx_buffer), "vAFE [raw]:%d\r\n", data_raw_ah_bio);
+				tx_com(tx_buffer, strlen((char const *)tx_buffer));
+			}
+		}
+	}
+	printk("ST1VAFE6AX vAFE reading ended while loop\n");
 }
+
+static void tx_com(uint8_t *tx_buffer, uint16_t len)
+{
+	printk("%s", tx_buffer);
+}
+
 static void st1vafe6ax_interrupt_cb1(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
-	k_mutex_lock(&MUTEX_RECEIVED_INTERRUPT, K_NO_WAIT);
-	RECEIVED_INTERRUPT = true;
-	k_mutex_unlock(&MUTEX_RECEIVED_INTERRUPT);
+	// printk("PERTRAUKTIS 1\n");
+	drdy_event = 1;
+	// k_mutex_lock(&MUTEX_RECEIVED_INTERRUPT, K_NO_WAIT);
+	// RECEIVED_INTERRUPT = true;
+	// k_mutex_unlock(&MUTEX_RECEIVED_INTERRUPT);
 }
 static void st1vafe6ax_interrupt_cb2(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
-	k_mutex_lock(&MUTEX_RECEIVED_INTERRUPT, K_NO_WAIT);
-	RECEIVED_INTERRUPT = true;
-	k_mutex_unlock(&MUTEX_RECEIVED_INTERRUPT);
+	// printk("PERTRAUKTIS 2\n");
+	drdy_event = 1;
+	// k_mutex_lock(&MUTEX_RECEIVED_INTERRUPT, K_NO_WAIT);
+	// RECEIVED_INTERRUPT = true;
+	// k_mutex_unlock(&MUTEX_RECEIVED_INTERRUPT);
 }
 
 #endif
