@@ -31,7 +31,7 @@
 
 // DEFINES
 // #define PMIC_OFF
-// #define SENSORS_OFF
+#define SENSORS_OFF
 // #define DEBUG_LOOP
 
 // // include stm generic drivers
@@ -239,11 +239,10 @@ int main(void)
 #ifndef SENSORS_OFF
 
 	// apeit be funkciju ir wrapperio
-	//  if (!st1vafe_init())
-	//  {
-	//  	printk("ST1VAFE sensors intialized\n");
-	//  }
-
+	if (!st1vafe_init())
+	{
+		printk("ST1VAFE sensors intialized\n");
+	}
 
 	if (!configure_interrupts()) // 3bx pertrauktis atjungta
 	{
@@ -255,50 +254,50 @@ int main(void)
 	const struct spi_dt_spec spi21_6ax_main = SPI_DT_SPEC_GET(DT_NODELABEL(st1vafe6ax), SPIOPS, 0);
 	const struct spi_dt_spec spi21_3bx_main = SPI_DT_SPEC_GET(DT_NODELABEL(st1vafe3bx), SPIOPS, 0);
 
-	// if (!spi_is_ready_dt(&spi21_3bx_main))
-	// {
-	// 	printk("ST1VAFE3BX SPI device not ready!\n");
-	// 	return -ENODEV;
-	// }
-	// /////////////////
-	// uint8_t tx_buf_data[2] = {ST1VAFE3BX_WHO_AM_I | 0x80, 0x00};
-	// uint8_t rx_buf_data[2];
+	if (!spi_is_ready_dt(&spi21_3bx_main))
+	{
+		printk("ST1VAFE3BX SPI device not ready!\n");
+		return -ENODEV;
+	}
+	/////////////////
+	uint8_t tx_buf_data[2] = {ST1VAFE3BX_WHO_AM_I | 0x80, 0x00};
+	uint8_t rx_buf_data[2];
 
-	// struct spi_buf tx_buf = {
-	// 	.buf = tx_buf_data,
-	// 	.len = 2,
-	// };
+	struct spi_buf tx_buf = {
+		.buf = tx_buf_data,
+		.len = 2,
+	};
 
-	// struct spi_buf rx_buf = {
-	// 	.buf = rx_buf_data,
-	// 	.len = 2,
-	// };
+	struct spi_buf rx_buf = {
+		.buf = rx_buf_data,
+		.len = 2,
+	};
 
-	// struct spi_buf_set tx = {
-	// 	.buffers = &tx_buf,
-	// 	.count = 1,
-	// };
+	struct spi_buf_set tx = {
+		.buffers = &tx_buf,
+		.count = 1,
+	};
 
-	// struct spi_buf_set rx = {
-	// 	.buffers = &rx_buf,
-	// 	.count = 1,
-	// };
+	struct spi_buf_set rx = {
+		.buffers = &rx_buf,
+		.count = 1,
+	};
 
-	// while (1)
-	// {
-	// 	k_msleep(1000);
-	// 	printk("Attempting transfer 3BX...\n");
-	// 	ret = spi_transceive_dt(&spi21_3bx_main, &tx, &rx);
+	while (1)
+	{
+		k_msleep(1000);
+		printk("Attempting transfer 3BX...\n");
+		ret = spi_transceive_dt(&spi21_3bx_main, &tx, &rx);
 
-	// 	if (ret != 0)
-	// 	{
-	// 		printk("SPI Error: %d\n", ret);
-	// 	}
-	// 	else
-	// 	{
-	// 		printk("WHO_AM_I: 0x%02X\n", rx_buf_data[1]); // 1 registras siuksle
-	// 	}
-	// }
+		if (ret != 0)
+		{
+			printk("SPI Error: %d\n", ret);
+		}
+		else
+		{
+			printk("WHO_AM_I: 0x%02X\n", rx_buf_data[1]); // 1 registras siuksle
+		}
+	}
 
 	if (!spi_is_ready_dt(&spi21_6ax_main))
 	{
@@ -341,39 +340,39 @@ int main(void)
 		}
 		else
 		{
-			printk("WHO_AM_I: 0x%02X\n", rx_buf_data[1]); // 1 registras siuksle siuksle
+			printk("WHO_AM_I: 0x%02X\n", rx_buf_data[1]); // 1 registras siuksle
 		}
 	}
 
-	/////////////////
+	///////////////
 
-	// if (!st1vafe6ax_device_id_get(&st1vafe6ax_ctx, &dummy))
-	// {
-	// 	printk("ST1VAFE6AX detected successfully\n");
-	// }
-	// else
-	// {
-	// 	printk("ST1VAFE6AX not detected\n");
-	// }
-	// printk("ST1VAFE6AX WHO_AM_I: %c\n", dummy);
-	// if (dummy == 0x71)
-	// {
-	// 	printk("ST1VAFE6AX WHO_AM_I correct\n");
-	// }
-	// if(!st1vafe3bx_device_id_get(&st1vafe3bx_ctx, &dummy))
-	// {
-	// 	printk("ST1VAFE3BX detected successfully\n");
-	// }
-	// else
-	// {
-	// 	printk("ST1VAFE3BX not detected\n");
-	// 	return 0;
-	// }
-	// printk("ST1VAFE3BX WHO_AM_I: %c\n", dummy);
-	// if(dummy == 0x48)
-	// {
-	// 	printk("ST1VAFE3BX WHO_AM_I correct\n");
-	// }
+	if (!st1vafe6ax_device_id_get(&st1vafe6ax_ctx, &dummy))
+	{
+		printk("ST1VAFE6AX detected successfully\n");
+	}
+	else
+	{
+		printk("ST1VAFE6AX not detected\n");
+	}
+	printk("ST1VAFE6AX WHO_AM_I: %c\n", dummy);
+	if (dummy == 0x71)
+	{
+		printk("ST1VAFE6AX WHO_AM_I correct\n");
+	}
+	if (!st1vafe3bx_device_id_get(&st1vafe3bx_ctx, &dummy))
+	{
+		printk("ST1VAFE3BX detected successfully\n");
+	}
+	else
+	{
+		printk("ST1VAFE3BX not detected\n");
+		return 0;
+	}
+	printk("ST1VAFE3BX WHO_AM_I: %c\n", dummy);
+	if (dummy == 0x48)
+	{
+		printk("ST1VAFE3BX WHO_AM_I correct\n");
+	}
 #endif
 
 	// start pmic measurement thread after 1 second
@@ -494,6 +493,7 @@ void pmic_measurements(void *arg1, void *arg2, void *arg3)
 	// k_sem_take(&SEM_PMIC_MEASURE, K_FOREVER);
 	// k_sem_give(&SEM_PMIC_MEASURE);
 	static uint8_t err = 0;
+	led_off(leds, 1);
 	while (1)
 	{
 
@@ -507,6 +507,9 @@ void pmic_measurements(void *arg1, void *arg2, void *arg3)
 		{
 			printk("Send failed: %d\n", err);
 		}
+		led_on(leds, 1);
+		k_msleep(100);
+		led_off(leds, 1);
 		// }
 		//}
 		k_msleep(UPDATE_TIME_MS);
@@ -553,10 +556,6 @@ void read_sensors(void)
 		   abs(current.val1), abs(current.val2) / 100);
 	printk("Charger Status: %d, Error: %d, VBUS: %s\n", status.val1, error.val1,
 		   vbus_present.val1 ? "connected" : "disconnected");
-
-	led_on(leds, 1); // turn on led2 to indicate pmic read
-	k_msleep(100);
-	led_off(leds, 1);
 }
 
 bool configure_events(void)
