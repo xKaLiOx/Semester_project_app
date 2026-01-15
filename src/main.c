@@ -11,13 +11,14 @@
 #include <zephyr/drivers/gpio.h>
 #include <hal/nrf_gpio.h>
 
-// #include <zephyr/bluetooth/bluetooth.h>
-// #include <zephyr/bluetooth/conn.h>
-// #include <zephyr/bluetooth/uuid.h>
-// #include <zephyr/bluetooth/gatt.h>
-// #include <bluetooth/services/nus.h>
-// #include <shell/shell_bt_nus.h>
-// #include <zephyr/bluetooth/hci.h>
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/uuid.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <bluetooth/services/nus.h>
+#include <zephyr/bluetooth/hci.h>
+#include <zephyr/bluetooth/uuid.h>
+#include <zephyr/bluetooth/gatt.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -62,19 +63,19 @@ void read_sensors(void);
 bool configure_events(void);
 void pmic_measurements(void *arg1, void *arg2, void *arg3);
 
-// void bt_nus_handler(void *arg1, void *arg2, void *arg3);
-// static void adv_work_handler(struct k_work *work);
-// static void advertising_start(void);
-// static void connected(struct bt_conn *conn, uint8_t err);
-// static void disconnected(struct bt_conn *conn, uint8_t reason);
-// static void recycled_cb(void);
-// int send_to_bt(const uint8_t *data, uint16_t len);
-// static void auth_cancel(struct bt_conn *conn);
-// static void security_changed(struct bt_conn *conn, bt_security_t level,
-// 							 enum bt_security_err err);
-// static void send_enabled_cb(enum bt_nus_send_status status);
-// static void nus_receive_cb(struct bt_conn *conn,
-// 						   const uint8_t *const data, uint16_t len);
+void bt_nus_handler(void *arg1, void *arg2, void *arg3);
+static void adv_work_handler(struct k_work *work);
+static void advertising_start(void);
+static void connected(struct bt_conn *conn, uint8_t err);
+static void disconnected(struct bt_conn *conn, uint8_t reason);
+static void recycled_cb(void);
+int send_to_bt(const uint8_t *data, uint16_t len);
+static void auth_cancel(struct bt_conn *conn);
+static void security_changed(struct bt_conn *conn, bt_security_t level,
+							 enum bt_security_err err);
+static void send_enabled_cb(enum bt_nus_send_status status);
+static void nus_receive_cb(struct bt_conn *conn,
+						   const uint8_t *const data, uint16_t len);
 
 #ifndef SENSORS_OFF
 static bool configure_interrupts(void);
@@ -83,11 +84,11 @@ static void st1vafe6ax_interrupt_cb1(const struct device *dev, struct gpio_callb
 static void st1vafe6ax_interrupt_cb2(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
 #endif
 
-// static struct bt_nus_cb nus_cb = {
-// 	.received = nus_receive_cb,
-// 	.sent = NULL,
-// 	.send_enabled = send_enabled_cb,
-// };
+static struct bt_nus_cb nus_cb = {
+	.received = nus_receive_cb,
+	.sent = NULL,
+	.send_enabled = send_enabled_cb,
+};
 
 typedef struct pmic_data_struct
 {
@@ -112,12 +113,14 @@ struct gpio_callback st1vafe3bx_interrupt;
 struct gpio_callback st1vafe6ax_interrupt1;
 struct gpio_callback st1vafe6ax_interrupt2;
 
+#ifndef SENSORS_OFF
 static const struct gpio_dt_spec st1vafe3bx_int_specs =
 	GPIO_DT_SPEC_GET_BY_IDX(DT_NODELABEL(st1vafe3bx), irq_gpios, 0);
 static const struct gpio_dt_spec st1vafe6ax_int_specs1 =
 	GPIO_DT_SPEC_GET_BY_IDX(DT_NODELABEL(st1vafe6ax), irq_gpios, 0);
 static const struct gpio_dt_spec st1vafe6ax_int_specs2 =
 	GPIO_DT_SPEC_GET_BY_IDX(DT_NODELABEL(st1vafe6ax), irq_gpios, 1);
+#endif
 
 static volatile bool vbus_connected;
 
@@ -127,45 +130,47 @@ static volatile bool PMIC_MEASUREMENTS_DONE = false;
 
 pmic_data pmic_measurement_data;
 
-// // threads
+// threads
 #define PMIC_STACK_SIZE 1024
 #define PMIC_PRIORITY 8
-// #define BT_NUS_PRIORITY 6
-// #define BT_NUS_STACK_SIZE 1024
+#define BT_NUS_PRIORITY 6
+#define BT_NUS_STACK_SIZE 1024
 K_THREAD_STACK_DEFINE(pmic_stack, PMIC_STACK_SIZE);
-// K_THREAD_STACK_DEFINE(bt_nus_stack, BT_NUS_STACK_SIZE);
+K_THREAD_STACK_DEFINE(bt_nus_stack, BT_NUS_STACK_SIZE);
 struct k_thread pmic_thread;
-// struct k_thread bt_nus_thread;
+struct k_thread bt_nus_thread;
 
-// // bluetooth
-// static struct bt_conn *current_conn;
-// static struct k_work adv_work;
+// bluetooth
 
-// static const struct bt_data ad[] = {
-// 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-// 	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
-// };
+static struct bt_conn *current_conn;
+static bool nus_tx_connected = false;
+static struct k_work adv_work;
 
-// static const struct bt_data sd[] = {
-// 	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_NUS_VAL),
-// };
+static const struct bt_data ad[] = {
+	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
+};
 
-// BT_CONN_CB_DEFINE(conn_callbacks) = {
-// 	.connected = connected,
-// 	.disconnected = disconnected,
-// 	.recycled = recycled_cb,
-// 	.security_changed = security_changed,
-// };
+static const struct bt_data sd[] = {
+	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_NUS_VAL),
+};
 
-// static struct bt_conn_auth_cb conn_auth_callbacks = {
-// 	.passkey_display = NULL,
-// 	.passkey_confirm = NULL,
-// 	.cancel = auth_cancel,
-// 	.pairing_confirm = NULL,
-// };
-// static struct bt_conn_auth_info_cb conn_auth_info_callbacks = {
-// 	.pairing_complete = NULL,
-// 	.pairing_failed = NULL};
+BT_CONN_CB_DEFINE(conn_callbacks) = {
+	.connected = connected,
+	.disconnected = disconnected,
+	.recycled = recycled_cb,
+	.security_changed = security_changed,
+};
+
+static struct bt_conn_auth_cb conn_auth_callbacks = {
+	.passkey_display = NULL,
+	.passkey_confirm = NULL,
+	.cancel = auth_cancel,
+	.pairing_confirm = NULL,
+};
+static struct bt_conn_auth_info_cb conn_auth_info_callbacks = {
+	.pairing_complete = NULL,
+	.pairing_failed = NULL};
 
 static K_SEM_DEFINE(SEM_PMIC_MEASURE, 0, 1);
 static K_SEM_DEFINE(SEM_BT_NUS_SEND, 0, 1);
@@ -377,141 +382,179 @@ int main(void)
 
 	// start pmic measurement thread after 1 second
 	k_thread_create(&pmic_thread, pmic_stack,
-					PMIC_STACK_SIZE,
-					pmic_measurements,
+					PMIC_STACK_SIZE, pmic_measurements,
 					NULL, NULL, NULL,
-					PMIC_PRIORITY, 0,
+					PMIC_PRIORITY, 0, K_MSEC(500));
+
+	int err;
+	err = bt_enable(NULL);
+	if (err)
+	{
+		printk("BLE enable failed (err: %d)", err);
+		return 0;
+	}
+
+	err = bt_conn_auth_cb_register(&conn_auth_callbacks);
+	if (err != 0)
+	{
+		printk("Authentication cb register error (err %d)\n", err);
+		return -1;
+	}
+	err = bt_conn_auth_info_cb_register(&conn_auth_info_callbacks);
+	if (err != 0)
+	{
+		printk("Authentication cb register info error (err %d)\n", err);
+		return -1;
+	}
+
+	// err = bt_gatt_exchange_mtu(current_conn, NULL);
+	// if (err)
+	// {
+	// 	printk("MTU exchange failed: %d\n", err);
+	// }
+	// else
+	// {
+	// 	printk("MTU exchange requested\n");
+	// 	bt_gatt_get_mtu(current_conn);
+	// }
+
+	// communication between phone
+	err = bt_nus_init(&nus_cb);
+	if (err)
+	{
+		printk("Failed to initialize BT NUS shell (err: %d)\n", err);
+		return 0;
+	}
+
+	// Enable Bluetooth
+	k_thread_create(&bt_nus_thread, bt_nus_stack,
+					BT_NUS_STACK_SIZE,
+					bt_nus_handler,
+					NULL, NULL, NULL,
+					BT_NUS_PRIORITY, 0,
 					K_MSEC(1000));
 
-	//  int err;
-	// 	err = bt_enable(NULL);
-	// 	if (err)
-	// 	{
-	// 		printk("BLE enable failed (err: %d)", err);
-	// 		return 0;
-	// 	}
+	k_work_init(&adv_work, adv_work_handler);
+	advertising_start();
 
-	// 	err = bt_conn_auth_cb_register(&conn_auth_callbacks);
-	// 	if (err != 0)
-	// 	{
-	// 		printk("Authentication cb register error (err %d)\n", err);
-	// 		return -1;
-	// 	}
-	// 	err = bt_conn_auth_info_cb_register(&conn_auth_info_callbacks);
-	// 	if (err != 0)
-	// 	{
-	// 		printk("Authentication cb register info error (err %d)\n", err);
-	// 		return -1;
-	// 	}
-
-	// 	// communication between phone
-	// 	err = bt_nus_init(&nus_cb);
-	// 	if (err)
-	// 	{
-	// 		printk("Failed to initialize BT NUS shell (err: %d)\n", err);
-	// 		return 0;
-	// 	}
-
-	// 	// Enable Bluetooth
-	// 	k_thread_create(&bt_nus_thread, bt_nus_stack,
-	// 					BT_NUS_STACK_SIZE,
-	// 					bt_nus_handler,
-	// 					NULL, NULL, NULL,
-	// 					BT_NUS_PRIORITY, 0,
-	// 					K_MSEC(1000));
-
-	// 	k_work_init(&adv_work, adv_work_handler);
-	// 	advertising_start();
-
-	// 	return 0; // main thread completed
+	return 0; // main thread completed
 }
 
-// void bt_nus_handler(void *arg1, void *arg2, void *arg3)
-// {
-// 	printk("BT NUS handler started...\n");
-// 	int8_t err = 0;
-// 	pmic_data local_copy; // Local buffer
-// 	bool should_send = false;
-// 	while (1)
-// 	{
-// 		if (k_sem_take(&SEM_BT_NUS_SEND, K_MSEC(500)) == 0) // no data between 500 ms
-// 		{
-// 			k_mutex_lock(&MUTEX_RECEIVED_INTERRUPT, K_FOREVER);
-// 			if (RECEIVED_INTERRUPT)
-// 			{
-// 				printk("BT NUS handler processing interrupt...\n");
-// 				RECEIVED_INTERRUPT = false;
-// 			}
-// 			k_mutex_unlock(&MUTEX_RECEIVED_INTERRUPT);
+void bt_nus_handler(void *arg1, void *arg2, void *arg3)
+{
+	printk("BT NUS handler started...\n");
+	int8_t err = 0;
+	pmic_data local_copy; // Local buffer
+	bool should_send = false;
+	bool send_bt_pmic_data = false;
+	static bool last_conn = false;
+	while (1)
+	{
+		if (current_conn)
+		{
+			if (!last_conn)
+			{
+				last_conn = true;
+			}
+			if (k_sem_take(&SEM_BT_NUS_SEND, K_FOREVER) == 0)
+			{
+				printk("BT NUS handler to SEND semaphore acquired...\n");
+				// 	// k_mutex_lock(&MUTEX_RECEIVED_INTERRUPT, K_FOREVER);
+				// 	// if (RECEIVED_INTERRUPT)
+				// 	// {
+				// 	// 	printk("BT NUS handler processing interrupt...\n");
+				// 	// 	RECEIVED_INTERRUPT = false;
+				// 	// }
+				// 	// k_mutex_unlock(&MUTEX_RECEIVED_INTERRUPT);
 
-// 			k_mutex_lock(&MUTEX_DATA_UPDATE, K_FOREVER);
-// 			should_send = (PMIC_MEASUREMENTS_DONE && START_MEASUREMENTS);
+				k_mutex_lock(&MUTEX_DATA_UPDATE, K_FOREVER);
+				printk("update mutex locked\n");
+				// should_send = (PMIC_MEASUREMENTS_DONE && START_MEASUREMENTS); only for sensor data, not pmic
 
-// 			if (should_send)
-// 			{
-// 				memcpy(&local_copy, &pmic_measurement_data, sizeof(local_copy));
-// 				PMIC_MEASUREMENTS_DONE = false;
-// 			}
-// 			k_mutex_unlock(&MUTEX_DATA_UPDATE);
+				if (PMIC_MEASUREMENTS_DONE)
+				{
+					printk("data should be sent\n");
+					memcpy(&local_copy, &pmic_measurement_data, sizeof(local_copy));
+					PMIC_MEASUREMENTS_DONE = false;
+					send_bt_pmic_data = true;
+				}
+				else
+				{
+					send_bt_pmic_data = false;
+				}
+				k_sem_give(&SEM_PMIC_MEASURE); // allow new measurement
+				k_mutex_unlock(&MUTEX_DATA_UPDATE);
+				printk("PMIC MEASURE semaphore given\n");
+				printk("update mutex unlocked\n");
 
-// 			if (should_send)
-// 			{
-// 				// send over bluetooth (mutex protected)
-// 				uint8_t buffer[255];
-// 				int len = snprintf((char *)buffer, sizeof(buffer),
-// 								   "V:%d.%03d I:%s%d.%03d CHG_STAT:%d ERR:%d VBUS:%s\n",
-// 								   local_copy.voltage.val1, local_copy.voltage.val2 / 1000,
-// 								   ((local_copy.current.val1 < 0) || (local_copy.current.val2 < 0)) ? "-" : "",
-// 								   abs(local_copy.current.val1), abs(local_copy.current.val2) / 100,
-// 								   local_copy.charger_status.val1,
-// 								   local_copy.charger_error.val1,
-// 								   local_copy.vbus_present.val1 ? "connected" : "disconnected");
+				if (send_bt_pmic_data && nus_tx_connected)
+				{
+					// send over bluetooth (mutex protected)
+					uint8_t buffer[255];
+					int len = snprintf((char *)buffer, sizeof(buffer),
+									   "V:%d.%03d I:%s%d.%03d CHG_STAT:%d ERR:%d VBUS:%s\n",
+									   local_copy.voltage.val1, local_copy.voltage.val2 / 1000,
+									   ((local_copy.current.val1 < 0) || (local_copy.current.val2 < 0)) ? "-" : "",
+									   abs(local_copy.current.val1), abs(local_copy.current.val2) / 100,
+									   local_copy.charger_status.val1,
+									   local_copy.charger_error.val1,
+									   local_copy.vbus_present.val1 ? "connected" : "disconnected");
 
-// 				err = send_to_bt(buffer, len);
-// 				if (err)
-// 				{
-// 					printk("Send failed: %d\n", err);
-// 				}
-// 			}
-// 			else
-// 			{
-// 				printk("No data to send over BT NUS (measurements not ready or not started)\n");
-// 			}
-// 		}
-// 		else
-// 		{
-// 			printk("No data to send over BT NUS (500ms)\n");
-// 		}
-// 	}
-// }
+					if (nus_tx_connected)
+					{
+						if (send_to_bt(buffer, 20) < 0)
+						{
+							printk("Send failed: %d\n", err);
+						}
+						else
+						{
+							printk("Sent message to BT NUS\n");
+						}
+					}
+				}
+				else
+				{
+					printk("No data to send over BT NUS (measurements not ready or not started)\n");
+				}
+			}
+		}
+		else
+		{
+			if (last_conn) // only print when state changes
+			{
+				printk("No connection to BT\n");
+			}
+			last_conn = false;
+			k_msleep(1000);
+		}
+	}
+}
 
 void pmic_measurements(void *arg1, void *arg2, void *arg3)
 {
-	printk("Waiting for NUS to be enabled...\n");
-
+	printk("PMIC thread enabled...\n");
 	// Block until first client enables notifications
-	// k_sem_take(&SEM_PMIC_MEASURE, K_FOREVER);
-	// k_sem_give(&SEM_PMIC_MEASURE);
 	static uint8_t err = 0;
 	led_off(leds, 1);
 	while (1)
 	{
-
-		// if (current_conn) // read even when START_MEASUREMENTS is off
-		// {
-		// if (k_sem_take(&SEM_PMIC_MEASURE, K_NO_WAIT) == 0)
-		// {
-		read_sensors();
-		// k_sem_give(&SEM_PMIC_MEASURE);
-		if (err)
+		if (current_conn) // read even when START_MEASUREMENTS is off
 		{
-			printk("Send failed: %d\n", err);
+			if (k_sem_take(&SEM_PMIC_MEASURE, K_NO_WAIT) == 0)
+			{
+				printk("PMIC measurement semaphore acquired...\n");
+				read_sensors();
+				if (err)
+				{
+					printk("Send failed: %d\n", err);
+				}
+				led_on(leds, 1);
+				k_msleep(100);
+				led_off(leds, 1);
+
+				k_sem_give(&SEM_BT_NUS_SEND); // give signal to send from bt nus thread
+			}
 		}
-		led_on(leds, 1);
-		k_msleep(100);
-		led_off(leds, 1);
-		// }
-		//}
 		k_msleep(UPDATE_TIME_MS);
 	}
 }
@@ -523,12 +566,6 @@ void read_sensors(void)
 	static struct sensor_value error;
 	static struct sensor_value status;
 	static struct sensor_value vbus_present;
-
-	if (PMIC_MEASUREMENTS_DONE)
-	{
-		printk("PMIC measurements haven't been processed yet, skipping new read.\n");
-		return; // already done
-	}
 
 	sensor_sample_fetch(charger);
 	sensor_channel_get(charger, SENSOR_CHAN_GAUGE_VOLTAGE, &volt);
@@ -547,7 +584,7 @@ void read_sensors(void)
 		pmic_measurement_data.charger_status = status;
 		pmic_measurement_data.charger_error = error;
 		pmic_measurement_data.vbus_present = vbus_present;
-		// PMIC_MEASUREMENTS_DONE = true;
+		PMIC_MEASUREMENTS_DONE = true;
 		k_mutex_unlock(&MUTEX_DATA_UPDATE);
 	}
 
@@ -641,8 +678,6 @@ bool configure_events(void)
 		printk("Regulator buck2 device not ready.\n");
 		return false;
 	}
-	// inits from .dts files, not tested
-	// mfd_npm13xx_init(pmic);
 
 	// pmic callback
 	static struct gpio_callback event_cb;
@@ -706,151 +741,149 @@ static void pmic_event_callback(const struct device *dev, struct gpio_callback *
 	}
 }
 
-// static void adv_work_handler(struct k_work *work)
-// {
-// 	int err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_2, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+static void adv_work_handler(struct k_work *work)
+{
+	int err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_2, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 
-// 	if (err)
-// 	{
-// 		printk("Advertising failed to start (err %d)\n", err);
-// 		return;
-// 	}
+	if (err)
+	{
+		printk("Advertising failed to start (err %d)\n", err);
+		return;
+	}
 
-// 	printk("Advertising successfully started\n");
-// }
+	printk("Advertising successfully started\n");
+}
 
-// static void advertising_start(void)
-// {
-// 	k_work_submit(&adv_work);
-// }
+static void advertising_start(void)
+{
+	k_work_submit(&adv_work);
+}
 
-// static void connected(struct bt_conn *conn, uint8_t err)
-// {
-// 	if (err)
-// 	{
-// 		printk("Connection failed, err 0x%02x %s\n", err, bt_hci_err_to_str(err));
-// 		return;
-// 	}
+static void connected(struct bt_conn *conn, uint8_t err)
+{
+	if (err)
+	{
+		printk("Connection failed, err 0x%02x %s\n", err, bt_hci_err_to_str(err));
+		return;
+	}
 
-// 	printk("Connected\n");
-// 	current_conn = bt_conn_ref(conn);
+	printk("Connected to the phone\n");
+	current_conn = bt_conn_ref(conn);
 
-// 	struct bt_le_conn_param param = {
-// 		.interval_min = 15, // 30ms (24 * 1.25ms)
-// 		.interval_max = 30, // 50ms (40 * 1.25ms)
-// 		.latency = 0,
-// 		.timeout = 400, // 4000ms (400 * 10ms)
-// 	};
+	struct bt_le_conn_param param = {
+		.interval_min = 15, // 30ms (24 * 1.25ms)
+		.interval_max = 30, // 50ms (40 * 1.25ms)
+		.latency = 0,
+		.timeout = 400, // 4000ms (400 * 10ms)
+	};
 
-// 	int ret = bt_conn_le_param_update(conn, &param);
-// 	if (ret)
-// 	{
-// 		printk("Failed to update conn params (err %d)\n", ret);
-// 	}
-// }
+	int ret = bt_conn_le_param_update(conn, &param);
+	if (ret)
+	{
+		printk("Failed to update conn params (err %d)\n", ret);
+	}
+}
 
-// static void disconnected(struct bt_conn *conn, uint8_t reason)
-// {
-// 	printk("Disconnected, reason 0x%02x %s\n", reason, bt_hci_err_to_str(reason));
+static void disconnected(struct bt_conn *conn, uint8_t reason)
+{
+	printk("Disconnected, reason 0x%02x %s\n", reason, bt_hci_err_to_str(reason));
 
-// 	k_sem_reset(&SEM_PMIC_MEASURE);
-// 	k_sem_reset(&SEM_BT_NUS_SEND);
-// 	if (current_conn)
-// 	{
-// 		bt_conn_unref(current_conn);
-// 		current_conn = NULL;
-// 	}
-// }
+	START_MEASUREMENTS = false;
+	PMIC_MEASUREMENTS_DONE = false;
 
-// static void recycled_cb(void)
-// {
-// 	printk("Disconnect is complete!\n");
-// 	advertising_start();
-// }
+	k_sem_reset(&SEM_PMIC_MEASURE);
+	k_sem_reset(&SEM_BT_NUS_SEND);
+	if (current_conn)
+	{
+		bt_conn_unref(current_conn);
+		current_conn = NULL;
+	}
+}
 
-// int send_to_bt(const uint8_t *data, uint16_t len)
-// {
-// 	if (!current_conn)
-// 	{
-// 		printk("Not connected\n");
-// 		return -ENOTCONN;
-// 	}
+static void recycled_cb(void)
+{
+	printk("Disconnect is complete, started advertising\n");
+	advertising_start();
+}
 
-// 	int err = bt_nus_send(current_conn, data, len);
-// 	if (err)
-// 	{
-// 		printk("Failed to send data (err %d)\n", err);
-// 		return err;
-// 	}
+int send_to_bt(const uint8_t *data, uint16_t len)
+{
+	int err = bt_nus_send(current_conn, data, len);
+	if (err < 0)
+	{
+		printk("Failed to send data (err %d)\n", err);
+		return err;
+	}
 
-// 	return 0;
-// }
+	return 0;
+}
 
-// static void auth_cancel(struct bt_conn *conn)
-// {
-// 	printk("Pairing cancelled\n");
-// }
+static void auth_cancel(struct bt_conn *conn)
+{
+	printk("Pairing cancelled\n");
+}
 
-// static void security_changed(struct bt_conn *conn, bt_security_t level,
-// 							 enum bt_security_err err)
-// {
-// 	if (!err)
-// 	{
-// 		printk("Security changed: level %d\n", level);
-// 	}
-// 	else
-// 	{
-// 		printk("Security failed: level %d err %d\n", level, err);
-// 	}
-// }
+static void security_changed(struct bt_conn *conn, bt_security_t level,
+							 enum bt_security_err err)
+{
+	if (!err)
+	{
+		printk("Security changed: level %d\n", level);
+	}
+	else
+	{
+		printk("Security failed: level %d err %d\n", level, err);
+	}
+}
 
-// static void nus_receive_cb(struct bt_conn *conn,
-// 						   const uint8_t *const data,
-// 						   uint16_t len)
-// {
-// 	printk("Received NUS data: len=%d\n", len);
-// 	printk("Data: ");
-// 	const uint8_t *ptr = data;
-// 	const uint8_t *end = data + len;
+static void nus_receive_cb(struct bt_conn *conn,
+						   const uint8_t *const data,
+						   uint16_t len)
+{
+	printk("Received NUS data: len=%d\n", len);
+	printk("Data: ");
+	const uint8_t *ptr = data;
+	const uint8_t *end = data + len;
 
-// 	for (; ptr < end; ptr++)
-// 	{
-// 		printk("%c", *ptr);
-// 	}
-// 	printk("\n");
-// 	// START/STOP commands
-// 	if (len == 4 || len == 5)
-// 	{
-// 		if (strncmp((const char *)data, "START", 5) == 0)
-// 		{
-// 			printk("START command received\n");
-// 			// start measurements
-// 			START_MEASUREMENTS = true;
-// 		}
-// 		else if (strncmp((const char *)data, "STOP", 4) == 0)
-// 		{
-// 			printk("STOP command received\n");
-// 			// stop measurements
-// 			START_MEASUREMENTS = false;
-// 		}
-// 	}
-// }
+	for (; ptr < end; ptr++)
+	{
+		printk("%c", *ptr);
+	}
+	printk("\n");
+	// START/STOP commands
+	if (len == 4 || len == 5)
+	{
+		if (strncmp((const char *)data, "START", 5) == 0)
+		{
+			printk("START command received\n");
+			// start measurements
+			START_MEASUREMENTS = true;
+		}
+		else if (strncmp((const char *)data, "STOP", 4) == 0)
+		{
+			printk("STOP command received\n");
+			// stop measurements
+			START_MEASUREMENTS = false;
+		}
+	}
+}
 
-// static void send_enabled_cb(enum bt_nus_send_status status)
-// {
-// 	if (status == BT_NUS_SEND_STATUS_ENABLED)
-// 	{
-// 		printk("NUS notifications enabled\n");
-// 		k_sem_give(&SEM_PMIC_MEASURE); // Signal ready
-// 		k_sem_give(&SEM_BT_NUS_SEND);
-// 	}
-// 	else
-// 	{
-// 		printk("NUS notifications disabled\n");
-// 		k_sem_reset(&SEM_PMIC_MEASURE); // Reset to not ready
-// 		k_sem_reset(&SEM_BT_NUS_SEND);
-// 	}
-// }
+static void send_enabled_cb(enum bt_nus_send_status status)
+{
+	if (status == BT_NUS_SEND_STATUS_ENABLED)
+	{
+		nus_tx_connected = true;
+		printk("NUS notifications enabled\n");
+		k_sem_give(&SEM_BT_NUS_SEND);
+	}
+	else
+	{
+		nus_tx_connected = false;
+		printk("NUS notifications disabled\n");
+		k_sem_reset(&SEM_PMIC_MEASURE); // Reset to not ready
+		k_sem_reset(&SEM_BT_NUS_SEND);
+	}
+}
 
 #ifndef SENSORS_OFF
 static bool configure_interrupts(void)
