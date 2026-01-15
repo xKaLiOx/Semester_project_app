@@ -76,7 +76,14 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
 static void send_enabled_cb(enum bt_nus_send_status status);
 static void nus_receive_cb(struct bt_conn *conn,
 						   const uint8_t *const data, uint16_t len);
-
+static ssize_t bt_read_battery_values(struct bt_conn *conn,
+									  const struct bt_gatt_attr *attr,
+									  void *buf, uint16_t len,
+									  uint16_t offset);
+static ssize_t bt_read_hr_rp_values(struct bt_conn *conn,
+									const struct bt_gatt_attr *attr,
+									void *buf, uint16_t len,
+									uint16_t offset);
 #ifndef SENSORS_OFF
 static bool configure_interrupts(void);
 static void st1vafe3bx_interrupt_cb(const struct device *dev, struct gpio_callback *cb, uint32_t pins);
@@ -142,9 +149,43 @@ struct k_thread bt_nus_thread;
 
 // bluetooth
 
-static struct bt_conn *current_conn;
-static bool nus_tx_connected = false;
-static struct k_work adv_work;
+// GATT defines
+#define BT_UUID_BAT_CUSTOM_SERV_VAL BT_UUID_128_ENCODE(0xd618e70c, 0x6cd4, 0x4fb3, 0xb085, 0x47139f2e3990)		  // custom UUID for battery
+#define BT_UUID_BAT_CUSTOM_SERV_VAL_INSIDE BT_UUID_128_ENCODE(0xd618e70c, 0x6cd4, 0x4fb3, 0xb085, 0x47139f2e3991) // custom UUID values of battery
+
+#define BT_UUID_HR_RP_CUSTOM_SERV_VAL BT_UUID_128_ENCODE(0x8b9895c7, 0x9570, 0x41d1, 0x8383, 0xb039202bc131)		// custom UUID for heart rate and respiratory rate
+#define BT_UUID_HR_RP_CUSTOM_SERV_VAL_INSIDE BT_UUID_128_ENCODE(0x8b9895c7, 0x9570, 0x41d1, 0x8383, 0xb039202bc132) // custom UUID for heart rate and respiratory rate
+
+#define BT_UUID_BAT_CUSTOM_SERVICE BT_UUID_DECLARE_128(BT_UUID_BAT_CUSTOM_SERV_VAL)
+#define BT_UUID_BAT_CUSTOM_SERVICE_VAL_INSIDE BT_UUID_DECLARE_128(BT_UUID_BAT_CUSTOM_SERV_VAL_INSIDE)
+
+#define BT_UUID_HR_RP_CUSTOM_SERVICE BT_UUID_DECLARE_128(BT_UUID_HR_RP_CUSTOM_SERV_VAL)
+#define BT_UUID_HR_RP_CUSTOM_SERVICE_VAL_INSIDE BT_UUID_DECLARE_128(BT_UUID_HR_RP_CUSTOM_SERV_VAL_INSIDE)
+
+BT_GATT_SERVICE_DEFINE(battery_service,
+					   BT_GATT_PRIMARY_SERVICE(BT_UUID_BAT_CUSTOM_SERVICE),
+					   BT_GATT_CHARACTERISTIC(BT_UUID_BAT_CUSTOM_SERVICE_VAL_INSIDE,
+											  BT_GATT_CHRC_READ, BT_GATT_PERM_READ,
+											  bt_read_battery_values, NULL, &pmic_measurement_data.voltage),
+					   BT_GATT_CHARACTERISTIC(BT_UUID_BAT_CUSTOM_SERVICE_VAL_INSIDE,
+											  BT_GATT_CHRC_READ, BT_GATT_PERM_READ,
+											  bt_read_battery_values, NULL, &pmic_measurement_data.current),
+					   BT_GATT_CHARACTERISTIC(BT_UUID_BAT_CUSTOM_SERVICE_VAL_INSIDE,
+											  BT_GATT_CHRC_READ, BT_GATT_PERM_READ,
+											  bt_read_battery_values, NULL, &pmic_measurement_data.charger_status),
+					   BT_GATT_CHARACTERISTIC(BT_UUID_BAT_CUSTOM_SERVICE_VAL_INSIDE,
+											  BT_GATT_CHRC_READ, BT_GATT_PERM_READ,
+											  bt_read_battery_values, NULL, &pmic_measurement_data.charger_error),
+					   BT_GATT_CHARACTERISTIC(BT_UUID_BAT_CUSTOM_SERVICE_VAL_INSIDE,
+											  BT_GATT_CHRC_READ, BT_GATT_PERM_READ,
+											  bt_read_battery_values, NULL, &pmic_measurement_data.vbus_present));
+
+BT_GATT_SERVICE_DEFINE(hr_rp_service,
+					   BT_GATT_PRIMARY_SERVICE(BT_UUID_HR_RP_CUSTOM_SERVICE),
+					   BT_GATT_CHARACTERISTIC(BT_UUID_HR_RP_CUSTOM_SERVICE_VAL_INSIDE,
+											  BT_GATT_CHRC_READ,
+											  BT_GATT_PERM_READ,
+											  bt_read_hr_rp_values, NULL, NULL));
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -152,8 +193,13 @@ static const struct bt_data ad[] = {
 };
 
 static const struct bt_data sd[] = {
-	BT_DATA_BYTES(BT_DATA_UUID128_ALL, BT_UUID_NUS_VAL),
+	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
 };
+
+// BT
+static struct bt_conn *current_conn;
+static bool nus_tx_connected = false;
+static struct k_work adv_work;
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected = connected,
@@ -490,19 +536,23 @@ void bt_nus_handler(void *arg1, void *arg2, void *arg3)
 				if (send_bt_pmic_data && nus_tx_connected)
 				{
 					// send over bluetooth (mutex protected)
-					uint8_t buffer[255];
+					uint8_t buffer[100];
+					// int len = snprintf((char *)buffer, sizeof(buffer),
+					// 				   "V:%d.%03d I:%s%d.%03d CHG_STAT:%d ERR:%d VBUS:%s\n",
+					// 				   local_copy.voltage.val1, local_copy.voltage.val2 / 1000,
+					// 				   ((local_copy.current.val1 < 0) || (local_copy.current.val2 < 0)) ? "-" : "",
+					// 				   abs(local_copy.current.val1), abs(local_copy.current.val2) / 100,
+					// 				   local_copy.charger_status.val1,
+					// 				   local_copy.charger_error.val1,
+					// 				   local_copy.vbus_present.val1 ? "connected" : "disconnected");
 					int len = snprintf((char *)buffer, sizeof(buffer),
-									   "V:%d.%03d I:%s%d.%03d CHG_STAT:%d ERR:%d VBUS:%s\n",
+									   "V:%d.%03d I:%s%d.%03d\n",
 									   local_copy.voltage.val1, local_copy.voltage.val2 / 1000,
 									   ((local_copy.current.val1 < 0) || (local_copy.current.val2 < 0)) ? "-" : "",
-									   abs(local_copy.current.val1), abs(local_copy.current.val2) / 100,
-									   local_copy.charger_status.val1,
-									   local_copy.charger_error.val1,
-									   local_copy.vbus_present.val1 ? "connected" : "disconnected");
-
+									   abs(local_copy.current.val1), abs(local_copy.current.val2) / 100);
 					if (nus_tx_connected)
 					{
-						if (send_to_bt(buffer, 20) < 0)
+						if (send_to_bt(buffer, len) < 0)
 						{
 							printk("Send failed: %d\n", err);
 						}
@@ -552,7 +602,11 @@ void pmic_measurements(void *arg1, void *arg2, void *arg3)
 				k_msleep(100);
 				led_off(leds, 1);
 
-				k_sem_give(&SEM_BT_NUS_SEND); // give signal to send from bt nus thread
+				if(nus_tx_connected)
+				{
+					k_sem_give(&SEM_BT_NUS_SEND); // give signal to send from bt nus thread
+				}
+					
 			}
 		}
 		k_msleep(UPDATE_TIME_MS);
@@ -883,6 +937,77 @@ static void send_enabled_cb(enum bt_nus_send_status status)
 		k_sem_reset(&SEM_PMIC_MEASURE); // Reset to not ready
 		k_sem_reset(&SEM_BT_NUS_SEND);
 	}
+}
+
+static ssize_t bt_read_battery_values(struct bt_conn *conn,
+									  const struct bt_gatt_attr *attr,
+									  void *buf, uint16_t len,
+									  uint16_t offset)
+{
+	static struct sensor_value volt;
+	static struct sensor_value current;
+	static struct sensor_value error;
+	static struct sensor_value status;
+	static struct sensor_value vbus_present;
+
+	sensor_sample_fetch(charger);
+	sensor_channel_get(charger, SENSOR_CHAN_GAUGE_VOLTAGE, &volt);
+	sensor_channel_get(charger, SENSOR_CHAN_GAUGE_AVG_CURRENT, &current);
+	sensor_channel_get(charger, (enum sensor_channel)SENSOR_CHAN_NPM13XX_CHARGER_STATUS,
+					   &status);
+	sensor_channel_get(charger, (enum sensor_channel)SENSOR_CHAN_NPM13XX_CHARGER_ERROR, &error);
+	sensor_attr_get(charger, (enum sensor_channel)SENSOR_CHAN_NPM13XX_CHARGER_VBUS_STATUS,
+					(enum sensor_attribute)SENSOR_ATTR_NPM13XX_CHARGER_VBUS_PRESENT,
+					&vbus_present);
+
+	char buffer[6];
+	int len_buf;
+
+	if (attr->user_data == &pmic_measurement_data.voltage)
+	{
+		len_buf = snprintf(buffer, sizeof(buffer), "%d.%03d", volt.val1, volt.val2 / 1000);
+		return bt_gatt_attr_read(conn, attr, buf, len, offset,
+								 buffer, len_buf);
+	}
+	else if (attr->user_data == &pmic_measurement_data.current)
+	{
+		len_buf = snprintf(buffer, sizeof(buffer), "%03d", current.val2 / 1000);//mA
+		return bt_gatt_attr_read(conn, attr, buf, len, offset,
+								 buffer, len_buf);
+	}
+	else if (attr->user_data == &pmic_measurement_data.charger_status)
+	{
+		len_buf = snprintf(buffer, sizeof(buffer), "%d", status.val1);
+		return bt_gatt_attr_read(conn, attr, buf, len, offset,
+								 buffer, len_buf);
+	}
+	else if (attr->user_data == &pmic_measurement_data.charger_error)
+	{
+		len_buf = snprintf(buffer, sizeof(buffer), "%d", error.val1);
+		return bt_gatt_attr_read(conn, attr, buf, len, offset,
+								 buffer, len_buf);
+	}
+	else if (attr->user_data == &pmic_measurement_data.vbus_present)
+	{
+		len_buf = snprintf(buffer, sizeof(buffer), "%s", vbus_present.val1 ? "Y" : "N");
+		return bt_gatt_attr_read(conn, attr, buf, len, offset,
+								 buffer, len_buf);
+	}
+	else
+	{
+		buffer[0] = 'X';
+		return bt_gatt_attr_read(conn, attr, buf, len, offset,
+								 buffer, 1);
+	}
+}
+
+static ssize_t bt_read_hr_rp_values(struct bt_conn *conn,
+									const struct bt_gatt_attr *attr,
+									void *buf, uint16_t len,
+									uint16_t offset)
+{
+	printk("Heart rate and respiratory read requested\n");
+	return 0;
 }
 
 #ifndef SENSORS_OFF
