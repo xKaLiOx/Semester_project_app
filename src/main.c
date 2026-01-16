@@ -167,7 +167,6 @@ int16_t data_raw_ah_bio;
 
 static st1vafe6ax_ah_bio_mode_t vafe_mode;
 static st1vafe6ax_filt_settling_mask_t filt_settling_mask;
-
 static uint8_t drdy_event = 0;
 
 // bluetooth
@@ -338,6 +337,7 @@ int main(void)
 	{
 		printk("ST1VAFE6AX global reset\n");
 	}
+	k_msleep(100);
 
 #endif
 
@@ -348,7 +348,7 @@ int main(void)
 					SENSOR_PRIORITY, 0,
 					K_NO_WAIT);
 
-	return 0;//STOP NEW THREADS ONLY SENSOR
+	return 0; // STOP NEW THREADS ONLY SENSOR
 
 	// start pmic measurement thread after 1 second
 	k_thread_create(&pmic_thread, pmic_stack,
@@ -1030,14 +1030,14 @@ void st1vafe6ax_vafe_read_data(void)
 	uint8_t ret;
 	uint8_t whoamI;
 
+
+	static st1vafe6ax_ah_bio_zin_t st1vafe6ax_impedance=ST1VAFE6AX_300MOhm;
 	st1vafe6ax_reset_t rst;
 
 	st1vafe6ax_data_ready_t data_ready;
 	st1vafe6ax_pin_int_route_t pin_int = {0};
 
-	k_msleep(10); // wait for sensor to boot up
-
-	// printk("ST1VAFE6AX vAFE reading\n");
+	printk("ST1VAFE6AX vAFE reading\n");
 	st1vafe6ax_device_id_get(&st1vafe6ax_ctx, &whoamI);
 
 	printk("WHOAMI: 0x%X\n", whoamI);
@@ -1052,6 +1052,8 @@ void st1vafe6ax_vafe_read_data(void)
 	{
 		st1vafe6ax_reset_get(&st1vafe6ax_ctx, &rst);
 	} while (rst != ST1VAFE6AX_READY);
+
+	k_msleep(10); // wait for all registers to reset
 
 	/* Enable Block Data Update */
 	st1vafe6ax_block_data_update_set(&st1vafe6ax_ctx, PROPERTY_ENABLE);
@@ -1069,13 +1071,18 @@ void st1vafe6ax_vafe_read_data(void)
 
 	/* Enable VAFE function */
 	vafe_mode.ah_bio1_en = 1;
+	vafe_mode.ah_bio2_en = 1;
 	st1vafe6ax_ah_bio_mode_set(&st1vafe6ax_ctx, vafe_mode);
 
+	/* Set VAFE impedance */
+	st1vafe6ax_ah_bio_zin_set(&st1vafe6ax_ctx, st1vafe6ax_impedance);
+	
 	pin_int.drdy_ah_bio = PROPERTY_ENABLE;
 	st1vafe6ax_pin_int2_route_set(&st1vafe6ax_ctx, pin_int);
 	/* Read samples in polling mode (no int) */
 	while (1)
 	{
+		k_mutex_lock(&MUTEX_RECEIVED_INTERRUPT, K_NO_WAIT);
 		if (drdy_event > 0)
 		{
 			drdy_event = 0;
@@ -1086,15 +1093,22 @@ void st1vafe6ax_vafe_read_data(void)
 			{
 				float_t vafe_mv;
 
-				st1vafe6ax_ah_bio_raw_get(&st1vafe6ax_ctx, &data_raw_ah_bio);
+				ret = st1vafe6ax_ah_bio_raw_get(&st1vafe6ax_ctx, &data_raw_ah_bio);
+				if (ret != 0)
+				{
+					printk("Error reading vAFE data, send again: %d\n", ret);
+					st1vafe6ax_ah_bio_raw_get(&st1vafe6ax_ctx, &data_raw_ah_bio);
+				}
 				vafe_mv = st1vafe6ax_from_lsb_to_mv(data_raw_ah_bio);
 
-				snprintf((char *)tx_buffer, sizeof(tx_buffer), "vAFE [mV]:%6.3f\r\n", vafe_mv);
-
+				// snprintf((char *)tx_buffer, sizeof(tx_buffer), "vAFE [mV]:%6.3f\r\n", vafe_mv);
 				// snprintf((char *)tx_buffer, sizeof(tx_buffer), "vAFE [raw]:%d\r\n", data_raw_ah_bio);
+				snprintf((char *)tx_buffer, sizeof(tx_buffer), "%d\n", data_raw_ah_bio);
+
 				tx_com(tx_buffer, strlen((char const *)tx_buffer));
 			}
 		}
+		k_mutex_unlock(&MUTEX_RECEIVED_INTERRUPT);
 	}
 	printk("ST1VAFE6AX vAFE reading ended while loop\n");
 }
@@ -1115,10 +1129,10 @@ static void st1vafe6ax_interrupt_cb1(const struct device *dev, struct gpio_callb
 static void st1vafe6ax_interrupt_cb2(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
 	// printk("PERTRAUKTIS 2\n");
+	k_mutex_lock(&MUTEX_RECEIVED_INTERRUPT, K_NO_WAIT);
 	drdy_event = 1;
-	// k_mutex_lock(&MUTEX_RECEIVED_INTERRUPT, K_NO_WAIT);
 	// RECEIVED_INTERRUPT = true;
-	// k_mutex_unlock(&MUTEX_RECEIVED_INTERRUPT);
+	k_mutex_unlock(&MUTEX_RECEIVED_INTERRUPT);
 }
 
 #endif

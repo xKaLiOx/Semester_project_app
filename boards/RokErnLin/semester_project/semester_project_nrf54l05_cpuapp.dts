@@ -59,7 +59,7 @@
     pinctrl-0 = <&uart22_default>;
     pinctrl-1 = <&uart22_sleep>;
     pinctrl-names = "default", "sleep";
-    current-speed = <921600>;//115200
+    current-speed = <250000>;//115200
 };
 
 &spi20 {
